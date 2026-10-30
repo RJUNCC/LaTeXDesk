@@ -830,22 +830,32 @@ function toggleLogs(force?: boolean) {
 function initSplitter() {
   const splitter = $('splitter')
   const editorPane = $('editor-pane')
-  if (settings.split) editorPane.style.flexBasis = `${settings.split}%`
+  // settings.split is the editor's share (%) of the space beside the file sidebar. It's applied in pixels:
+  // a % flex-basis would be a share of the whole row (sidebar included), putting the divider off the mouse.
+  const available = () => $('workspace').clientWidth - $('sidebar').offsetWidth - splitter.offsetWidth
+  const apply = () => {
+    if (available() > 0) editorPane.style.flexBasis = `${Math.round((available() * (settings.split ?? 50)) / 100)}px`
+  }
+  // also when the window is resized, or the workspace first appears
+  new ResizeObserver(apply).observe($('workspace'))
   splitter.addEventListener('pointerdown', ev => {
+    ev.preventDefault()
     splitter.setPointerCapture(ev.pointerId)
-    const parent = editorPane.parentElement!.getBoundingClientRect()
-    const sidebar = $('sidebar').getBoundingClientRect().width
+    // where on the divider it was grabbed, so it doesn't jump by that much
+    const grab = ev.clientX - splitter.getBoundingClientRect().left
+    document.body.classList.add('resizing')
     const move = (e: PointerEvent) => {
-      const pct = ((e.clientX - parent.left - sidebar) / (parent.width - sidebar)) * 100
-      settings.split = Math.min(80, Math.max(20, pct))
-      editorPane.style.flexBasis = `${settings.split}%`
+      const width = e.clientX - grab - editorPane.getBoundingClientRect().left
+      settings.split = Math.min(80, Math.max(20, (width / available()) * 100))
+      apply()
     }
     const up = () => {
       splitter.removeEventListener('pointermove', move)
+      document.body.classList.remove('resizing')
       api.setSettings({ split: settings.split })
     }
     splitter.addEventListener('pointermove', move)
-    splitter.addEventListener('pointerup', up, { once: true })
+    splitter.addEventListener('lostpointercapture', up, { once: true })
   })
 }
 

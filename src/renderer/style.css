@@ -64,7 +64,9 @@ button.icon:hover { color: var(--text); background: #ffffff10; }
 #editor-pane { flex: 0 0 50%; display: flex; flex-direction: column; min-width: 0; }
 #editor { flex: 1; min-height: 0; }
 #splitter { width: 5px; flex: none; cursor: col-resize; background: var(--border); }
-#splitter:hover { background: var(--accent); }
+#splitter:hover, body.resizing #splitter { background: var(--accent); }
+/* while dragging the divider: no text selection, and the resize cursor everywhere */
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
 #pdf-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
 #zoom-level { min-width: 42px; text-align: center; }

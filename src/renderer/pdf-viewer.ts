@@ -11,6 +11,7 @@ export class PdfViewer {
   private observer: IntersectionObserver
   private scale = 1.2
   private fitWidth = true
+  private resizeTimer = 0
   private renderToken = 0
 
   /** Called with PDF-point coordinates when the user double-clicks a page (reverse SyncTeX). */
@@ -27,7 +28,12 @@ export class PdfViewer {
       { root: container, rootMargin: '600px 0px' }
     )
     new ResizeObserver(() => {
-      if (this.fitWidth && this.doc) this.applyScale(this.computeFitScale())
+      if (!this.fitWidth || !this.doc) return
+      // while the pane is being resized (dragging the divider), only stretch the current page images, which
+      // is cheap and keeps up with the mouse; redraw them sharp once the resizing stops
+      this.stretchTo(this.computeFitScale())
+      clearTimeout(this.resizeTimer)
+      this.resizeTimer = window.setTimeout(() => this.applyScale(this.computeFitScale()), 150)
     }).observe(container)
   }
 
@@ -105,6 +111,14 @@ export class PdfViewer {
   private computeFitScale() {
     const widest = Math.max(...this.pages.map(p => p.width), 1)
     return Math.max(0.25, (this.container.clientWidth - 32) / widest)
+  }
+
+  /** Resize the page boxes without redrawing them (the canvases fill their box, so the images stretch). */
+  private stretchTo(scale: number) {
+    for (const p of this.pages) {
+      p.el.style.width = `${p.width * scale}px`
+      p.el.style.height = `${p.height * scale}px`
+    }
   }
 
   private applyScale(scale: number) {
