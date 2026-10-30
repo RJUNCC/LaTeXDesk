@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ldfile:; connect-src 'self' ldfile:; worker-src 'self' blob:">
+  <title>LaTeXDesk</title>
+  <link rel="stylesheet" href="katex/katex.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="toolbar">
+    <button id="open-btn" title="Open project folder (Ctrl+O)">Open</button>
+    <button id="templates-btn" title="Start a document from a template">Templates</button>
+    <span id="project-name"></span>
+    <div class="spacer"></div>
+    <button id="compile-btn" class="primary" title="Recompile (Ctrl+Enter)"><span class="spin"></span>Recompile</button>
+    <label class="toggle" title="Recompile automatically after you stop typing"><input type="checkbox" id="auto-compile"> Auto</label>
+    <button id="logs-btn" title="Logs (Ctrl+L)">Logs <span id="log-count" class="badge"></span></button>
+    <span id="status"></span>
+  </header>
+
+  <div id="empty">
+    <div>
+      <h1>LaTeXDesk</h1>
+      <p>Open a folder containing your LaTeX project.</p>
+      <button id="empty-open" class="primary">Open Project Folder…</button>
+      <button id="empty-template">New from Template…</button>
+    </div>
+  </div>
+
+  <main id="workspace" hidden>
+    <aside id="sidebar">
+      <div class="section-title">Files <button id="new-file-btn" class="icon" title="New file">+</button></div>
+      <ul id="file-list"></ul>
+      <div class="section-title">Outline</div>
+      <ul id="outline"></ul>
+    </aside>
+    <section id="editor-pane">
+      <div class="pane-title"><span id="current-file"></span><div id="mode-switch" class="mode-switch" hidden title="Code shows the LaTeX; Visual shows it formatted, like a word processor (Ctrl+Shift+E)"><button data-mode="code">Code</button><button data-mode="visual">Visual</button></div></div>
+      <div id="format-bar" class="format-bar"></div>
+      <div id="editor"></div>
+    </section>
+    <div id="splitter"></div>
+    <section id="pdf-pane">
+      <nav id="side-tabs" class="side-tabs">
+        <button data-panel="pdf" class="active">PDF</button>
+        <button data-panel="ai">AI <span class="badge" id="ai-badge"></span></button>
+        <button data-panel="review" title="Grammar, flow, fact check, argument and bias">Review <span class="badge error" id="review-badge"></span></button>
+        <button data-panel="proof" title="Build and check proofs step by step">Proof</button>
+        <button data-panel="tasks">Tasks <span class="badge" id="tasks-badge"></span></button>
+        <button data-panel="references" title="References used in this project">Refs <span class="badge" id="refs-badge"></span></button>
+        <button data-panel="library" title="Your Zotero library">Library</button>
+        <button data-panel="research">Research</button>
+        <button data-panel="history">History</button>
+        <div class="spacer"></div>
+        <button id="ai-settings-btn" class="icon" title="Settings (Ctrl+,)" aria-label="Settings">⚙</button>
+      </nav>
+      <div class="side-panel" data-panel="pdf">
+        <div class="pane-title">
+          <button id="sync-btn" class="icon" title="Jump to cursor location in PDF (Ctrl+Alt+J)">⇥</button>
+          <div class="spacer"></div>
+          <button id="zoom-out" class="icon">−</button>
+          <span id="zoom-level">100%</span>
+          <button id="zoom-in" class="icon">+</button>
+          <button id="zoom-fit" class="icon" title="Fit width">⤢</button>
+        </div>
+        <div id="pdf"></div>
+        <div id="logs" hidden>
+          <div class="pane-title">Logs <div class="spacer"></div>
+            <button id="raw-toggle">Raw log</button>
+            <button id="logs-close" class="icon">×</button>
+          </div>
+          <div id="log-entries"></div>
+          <pre id="raw-log" hidden></pre>
+        </div>
+      </div>
+      <div class="side-panel" data-panel="ai" hidden></div>
+      <div class="side-panel" data-panel="review" hidden></div>
+      <div class="side-panel" data-panel="proof" hidden></div>
+      <div class="side-panel" data-panel="tasks" hidden></div>
+      <div class="side-panel" data-panel="references" hidden></div>
+      <div class="side-panel" data-panel="library" hidden></div>
+      <div class="side-panel" data-panel="research" hidden></div>
+      <div class="side-panel" data-panel="history" hidden></div>
+    </section>
+  </main>
+
+  <dialog id="prompt">
+    <form method="dialog">
+      <p id="prompt-message"></p>
+      <input id="prompt-input" autofocus>
+      <!-- Enter submits with the first submit button, so OK must come first in the DOM -->
+      <menu><button value="ok" class="primary">OK</button><button value="cancel" formnovalidate>Cancel</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="table-dialog" class="wide">
+    <form method="dialog">
+      <h3>Insert table</h3>
+      <div class="table-builder">
+        <div>
+          <div id="table-grid" class="table-grid"></div>
+          <div id="table-grid-label" class="muted">3 × 3</div>
+        </div>
+        <div class="table-options">
+          <label>Rows <input type="number" id="tbl-rows" min="1" max="50" value="3"></label>
+          <label>Columns <input type="number" id="tbl-cols" min="1" max="20" value="3"></label>
+          <label>Alignment
+            <select id="tbl-align"><option value="l">Left</option><option value="c" selected>Center</option><option value="r">Right</option></select>
+          </label>
+          <label>Style
+            <select id="tbl-style">
+              <option value="grid">Full grid lines</option>
+              <option value="booktabs">Professional (booktabs)</option>
+              <option value="plain">No lines</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="tbl-header" checked> Bold header row</label>
+          <label class="check"><input type="checkbox" id="tbl-float" checked> Wrap in table with caption &amp; label</label>
+          <label>Caption <input id="tbl-caption" value="Caption"></label>
+        </div>
+      </div>
+      <menu><button value="ok" class="primary">Insert</button><button value="cancel" formnovalidate>Cancel</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="template-dialog" class="wide">
+    <form method="dialog">
+      <h3>Start from a template</h3>
+      <p class="muted" id="template-target"></p>
+      <div id="template-list" class="template-list"></div>
+      <menu><button value="cancel">Close</button></menu>
+    </form>
+  </dialog>
+
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

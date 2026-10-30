@@ -1,0 +1,14 @@
+# dependencies and build output
+node_modules/
+dist/
+release/
+# generated from latex.grammar by build.mjs
+src/overleaf/lezer-latex/latex.mjs
+src/overleaf/lezer-latex/latex.terms.mjs
+# per-project app data (compile output, tasks, history) if a project is opened inside the repo
+.texdesk/
+# local files
+*.log
+.env
+.DS_Store
+Thumbs.db
