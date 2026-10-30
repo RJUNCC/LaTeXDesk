@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions, ideas and general feedback
+    url: https://github.com/RJUNCC/LaTeXDesk/discussions
+    about: Ask how to do something, share what you made, or chat about ideas in Discussions.

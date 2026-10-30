@@ -1,5 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, protocol, net } = require('electron')
 const { pathToFileURL } = require('url')
+// name and version from package.json, so they're right when running from source too (Electron reports its own there)
+const pkg = require('./package.json')
+const REPO = 'https://github.com/RJUNCC/LaTeXDesk'
 const ai_ = require('./ai')
 const research = require('./research')
 const { exportSubmission } = require('./export')
@@ -211,6 +214,7 @@ function buildMenu() {
         { label: 'Open Project Folder…', accelerator: 'CmdOrCtrl+O', click: send('open-folder') },
         { label: 'New File…', accelerator: 'CmdOrCtrl+N', click: send('new-file') },
         { label: 'New from Template…', accelerator: 'CmdOrCtrl+Shift+N', click: send('templates') },
+        { label: 'Import Document (Word, Google Docs, Markdown)…', accelerator: 'CmdOrCtrl+Shift+I', click: send('import') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') },
@@ -250,7 +254,13 @@ function buildMenu() {
     {
       label: 'Help',
       submenu: [
+        { label: 'Learn LaTeX and LaTeXDesk…', accelerator: 'F1', click: send('learn') },
         { label: 'Getting Started…', click: send('getting-started') },
+        { type: 'separator' },
+        // GitHub issue forms, with the version filled in
+        { label: 'Report a Bug…', click: () => shell.openExternal(`${REPO}/issues/new?template=bug_report.yml&version=${pkg.version}`) },
+        { label: 'Suggest a Feature…', click: () => shell.openExternal(`${REPO}/issues/new?template=feature_request.yml&version=${pkg.version}`) },
+        { label: 'Questions and Discussions…', click: () => shell.openExternal(`${REPO}/discussions`) },
         { type: 'separator' },
         { label: 'About LaTeXDesk', click: send('about') },
       ],
@@ -417,6 +427,38 @@ ipcMain.handle('file:delete-appdata', async (_e, root, rel) => {
   if (!full.startsWith(appDir)) throw new Error('Refusing to delete outside .texdesk')
   await fs.rm(full, { force: true })
 })
+// binary files (e.g. images from an imported Word document), sent as base64
+ipcMain.handle('file:write-binary', async (_e, root, rel, base64) => {
+  const full = resolveInProject(root, rel)
+  await fs.mkdir(path.dirname(full), { recursive: true })
+  await fs.writeFile(full, Buffer.from(base64, 'base64'))
+})
+// File → Import Document: the user picks a Word / LibreOffice / Markdown / HTML file anywhere on disk
+ipcMain.handle('import:choose', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Import a document',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Documents', extensions: ['docx', 'odt', 'md', 'markdown', 'html', 'htm', 'txt'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  if (canceled || !filePaths[0]) return null
+  const data = await fs.readFile(filePaths[0])
+  lastImportDir = path.dirname(filePaths[0])
+  return { name: path.basename(filePaths[0]), base64: data.toString('base64') }
+})
+// images a Markdown/HTML document links to (e.g. ![plot](plot.png)) are copied from beside that document;
+// only image files, and only from the folder of the document the user just picked
+let lastImportDir = null
+ipcMain.handle('import:copy-image', async (_e, rel, root, destRel) => {
+  if (!lastImportDir || !/\.(png|jpe?g|pdf)$/i.test(rel)) throw new Error('not an image')
+  const src = path.resolve(lastImportDir, rel)
+  if (!src.startsWith(path.resolve(lastImportDir) + path.sep)) throw new Error('outside the document folder')
+  const dest = resolveInProject(root, destRel)
+  await fs.mkdir(path.dirname(dest), { recursive: true })
+  await fs.copyFile(src, dest)
+})
 ipcMain.handle('file:read-optional', (_e, root, rel) => fs.readFile(resolveInProject(root, rel), 'utf8').catch(() => null))
 ipcMain.handle('file:write', async (_e, root, rel, content) => {
   const full = resolveInProject(root, rel)
@@ -451,9 +493,14 @@ ipcMain.handle('setup:status', async () => {
     zotero: { running: !!zot.running, betterBibtex: !!zot.betterBibtex },
   }
 })
-// from package.json, so it's right when running from source too (Electron would report its own name there)
-const pkg = require('./package.json')
 ipcMain.handle('app:info', () => ({ name: pkg.productName, version: pkg.version }))
+// Learn: a private folder for lesson practice files, and one for the tour's sample project
+ipcMain.handle('learn:folder', async (_e, name) => {
+  if (!['practice', 'tour'].includes(name)) throw new Error('unknown learn folder')
+  const dir = path.join(app.getPath('userData'), 'learn', name)
+  await fs.mkdir(dir, { recursive: true })
+  return dir
+})
 
 ipcMain.handle('compile', (_e, root, mainFile) => compile(root, mainFile))
 ipcMain.handle('compile:cancel', () => cancelCompile())

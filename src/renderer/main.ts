@@ -34,10 +34,11 @@ import { LaTeXLanguage } from '../overleaf/latex-language'
 import LatexParser, { LatexLogEntry } from '../overleaf/latex-log-parser'
 import { latexCompletions, indexProjectText, projectSymbols, setZoteroSource } from './completions'
 import { PdfViewer } from './pdf-viewer'
+import { highlightStyle, theme } from './editor-theme'
 import { FormatToolbar } from './toolbar'
 import { FormatContext, toggleCommand } from './format'
 import { TEMPLATES, Template } from './templates'
-import { initPanels } from './panels'
+import { initPanels, PanelName, showPanel } from './panels'
 import { applyRecommendedDefaults, openAiSettings } from './ai-settings'
 import type { AppHost } from './host'
 import { reviewChanges } from './diff-review'
@@ -46,6 +47,8 @@ import { aiAutocomplete } from './autocomplete'
 import { initTasks } from './tasks'
 import { equationPreview, setPreambleMacros } from './equation-preview'
 import { openGettingStarted, showAbout } from './getting-started'
+import { importDocument } from './import-doc'
+import { initLearn, openLearn } from './learn'
 import { contentWidth, isVisual, projectImages, setVisual, sourceOnly, visual, visualCapable, visualPhrases } from './visual-mode'
 import { imageFrom, imageToLatex, initResearch } from './research-panel'
 import { initSpell, setSpellEnabled, spellCheck } from './spell'
@@ -70,6 +73,10 @@ declare global {
       exportSubmission(root: string, mainFile: string, zipPath?: string): Promise<unknown>
       deleteAppData(root: string, rel: string): Promise<void>
       writeFile(root: string, rel: string, content: string): Promise<void>
+      writeBinary(root: string, rel: string, base64: string): Promise<void>
+      importChoose(): Promise<{ name: string; base64: string } | null>
+      importCopyImage(rel: string, root: string, destRel: string): Promise<void>
+      learnFolder(name: 'practice' | 'tour'): Promise<string>
       compile(root: string, main: string): Promise<{ ok: boolean; log: string; pdf: Uint8Array | null; engine: string; cancelled: boolean; timedOut: boolean; missingTex?: boolean }>
       cancelCompile(): Promise<void>
       synctex(root: string, main: string, args: object): Promise<any>
@@ -90,6 +97,8 @@ type Settings = {
   editorMode?: 'code' | 'visual'
   /** the welcome / Getting Started dialog has been shown once */
   welcomed?: boolean
+  /** ids of the Learn lessons completed */
+  learnDone?: string[]
 }
 
 const api = window.texdesk
@@ -107,41 +116,6 @@ let logEntries: LatexLogEntry[] = []
 let autoSaveTimer: number | undefined
 
 // ---------- editor ----------
-
-// Colours loosely follow Overleaf's dark editor theme
-const highlightStyle = HighlightStyle.define([
-  { tag: t.tagName, color: '#7cb7ff' },
-  { tag: t.keyword, color: '#c792ea' },
-  { tag: t.literal, color: '#7cb7ff' },
-  { tag: t.attributeValue, color: '#f0b46e' },
-  { tag: t.typeName, color: '#f0b46e' },
-  { tag: t.string, color: '#8fd18f' },
-  { tag: t.number, color: '#f78c6c' },
-  { tag: t.comment, color: '#7d8590', fontStyle: 'italic' },
-  { tag: [t.brace, t.squareBracket], color: '#d4b106' },
-  { tag: t.link, color: '#7cb7ff', textDecoration: 'underline' },
-  { tag: t.monospace, fontFamily: 'inherit' },
-  { tag: t.strong, fontWeight: 'bold' },
-])
-
-const theme = EditorView.theme(
-  {
-    '&': { height: '100%', backgroundColor: 'var(--editor-bg)', color: 'var(--text)' },
-    // no ligatures: fonts like Cascadia Code would show TikZ's -> and >= as → and ≥
-    '.cm-content': { caretColor: '#fff', fontFamily: 'var(--mono)', fontVariantLigatures: 'none' },
-    '.cm-scroller': { fontFamily: 'var(--mono)', lineHeight: '1.55' },
-    '.cm-gutters': { backgroundColor: 'var(--editor-bg)', color: '#5c6370', border: 'none' },
-    '.cm-activeLine': { backgroundColor: '#ffffff08' },
-    '.cm-activeLineGutter': { backgroundColor: '#ffffff0d', color: '#abb2bf' },
-    '&.cm-focused .cm-cursor': { borderLeftColor: '#fff' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-      backgroundColor: '#3a4a6b !important',
-    },
-    '.cm-tooltip': { backgroundColor: 'var(--panel)', border: '1px solid var(--border)' },
-    '.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--accent)', color: '#fff' },
-  },
-  { dark: true }
-)
 
 const lineWrapping = new Compartment()
 
@@ -171,8 +145,30 @@ function setEditorMode(mode: 'code' | 'visual', persist = true) {
 
 let texHelpShown = false
 
+const TOUR_SAMPLE = String.raw`\documentclass{article}
+\usepackage{amsmath}
+\title{A Sample Document}
+\author{LaTeXDesk}
+\begin{document}
+\maketitle
+
+\section{Introduction}
+This sample shows what a LaTeX document looks like. Text can be \textbf{bold} or \emph{emphasised}, and maths can sit in a sentence, like $a^2 + b^2 = c^2$, or on its own line:
+\[
+  \int_0^1 x^2 \, dx = \frac{1}{3}
+\]
+
+\section{A list}
+\begin{itemize}
+  \item Sections are numbered for you.
+  \item The PDF updates when you compile.
+\end{itemize}
+
+\end{document}
+`
+
 function gettingStarted(firstRun = false) {
-  openGettingStarted({ mode: visualOn() ? 'visual' : 'code', setMode: m => setEditorMode(m), firstRun })
+  openGettingStarted({ mode: visualOn() ? 'visual' : 'code', setMode: m => setEditorMode(m), firstRun, onLearn: () => void openLearn() })
 }
 
 function renderModeSwitch() {
@@ -859,6 +855,46 @@ function initSplitter() {
   })
 }
 
+/** File → Import Document: a Word / Google Docs / LibreOffice / Markdown / HTML file becomes a new .tex file. */
+async function importDoc() {
+  const picked = await api.importChoose()
+  if (!picked) return
+  if (!root) {
+    // no project yet: the imported document needs a folder to live in
+    setStatus('Choose a folder to keep the imported document in')
+    const dir = await api.chooseProject()
+    if (!dir) return setStatus('')
+    await openProject(dir, false)
+    if (!root) return
+  }
+  const stem = picked.name.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'imported'
+  let name = `${stem}.tex`
+  for (let n = 2; files.some(f => f.path === name); n++) name = `${stem}-${n}.tex`
+  setStatus(`Importing ${picked.name}…`)
+  try {
+    const bytes = Uint8Array.from(atob(picked.base64), c => c.charCodeAt(0))
+    const result = await importDocument(picked.name, bytes, `figures/${name.replace(/\.tex$/, '')}`)
+    for (const img of result.images) await api.writeBinary(root, img.path, img.base64)
+    for (const img of result.linked)
+      await api.importCopyImage(img.src, root, img.path).catch(() => result.warnings.push(`Copy ${img.src} into the project as ${img.path} so its figure shows.`))
+    await api.writeFile(root, name, result.tex)
+    await refreshFiles()
+    // into a project with no document yet, the import becomes the main document and is compiled
+    const keepMain = !!mainFile && mainFile !== name && files.some(f => f.path === mainFile)
+    if (!keepMain) {
+      mainFile = name
+      settings.mainFiles = { ...settings.mainFiles, [root]: name }
+      await api.setSettings({ mainFiles: settings.mainFiles })
+    }
+    await openFile(name)
+    const notes = [keepMain ? 'To compile it, use Build → Set Current File as Main Document.' : '', ...result.warnings].filter(Boolean).join(' ')
+    setStatus(`Imported ${picked.name} as ${name}.${notes ? ' ' + notes : ''}`, result.warnings.length ? 'warn' : 'ok')
+    if (!keepMain) compile()
+  } catch (e) {
+    setStatus(`Couldn't import ${picked.name}: ${(e as Error).message}`, 'error')
+  }
+}
+
 async function chooseAndOpen() {
   const dir = await api.chooseProject()
   if (dir) openProject(dir)
@@ -898,6 +934,8 @@ api.onMenu(channel => {
     case 'toggle-logs': return toggleLogs()
     case 'export': return void exportForSubmission()
     case 'getting-started': return gettingStarted()
+    case 'learn': return void openLearn()
+    case 'import': return void importDoc()
     case 'about': return void showAbout()
     case 'toggle-visual': return setEditorMode(visualOn() ? 'code' : 'visual')
     case 'settings': return openAiSettings()
@@ -915,6 +953,7 @@ $('compile-btn').onclick = () => (compiling ? api.cancelCompile() : compile())
 $('open-btn').onclick = $('empty-open').onclick = () => chooseAndOpen()
 $('new-file-btn').onclick = () => newFile()
 $('templates-btn').onclick = $('empty-template').onclick = () => showTemplates()
+$('empty-import').onclick = () => void importDoc()
 $('logs-btn').onclick = () => toggleLogs()
 $('logs-close').onclick = () => toggleLogs(false)
 $('sync-btn').onclick = () => syncForward()
@@ -1054,6 +1093,28 @@ projectListeners.push(() => void refreshMacros())
   initLibrary(host)
   initReview(host)
   initProof(host)
+  initLearn({
+    sandbox: () => api.learnFolder('practice'),
+    readFileOptional: (dir, rel) => api.readFileOptional(dir, rel),
+    writeFile: (dir, rel, text) => api.writeFile(dir, rel, text),
+    writeBinary: (dir, rel, b64) => api.writeBinary(dir, rel, b64),
+    compile: (dir, file) => api.compile(dir, file),
+    done: () => settings.learnDone ?? [],
+    setDone: ids => {
+      settings.learnDone = ids
+      void api.setSettings({ learnDone: ids })
+    },
+    showPanel: name => showPanel(name as PanelName),
+    ensureProject: async () => {
+      if (root) return true
+      // no project yet: the tour shows a small sample document
+      const dir = await api.learnFolder('tour')
+      if (!(await api.readFileOptional(dir, 'main.tex'))) await api.writeFile(dir, 'main.tex', TOUR_SAMPLE)
+      await openProject(dir, false)
+      return !!root
+    },
+  })
+  $('learn-btn').onclick = () => void openLearn()
   setZoteroSource(libraryItems, key => void ensureInBib(host, [key]).then(added => added.length && setStatus(`Added ${key} to the bibliography from Zotero`, 'ok')))
   refreshLibrary().catch(() => {})
   initSpell(settings.learnedWords ?? [], words => api.setSettings({ learnedWords: words }))

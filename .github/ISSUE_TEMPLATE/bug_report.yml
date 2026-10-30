@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in LaTeXDesk doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this! A few details help a lot.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong? Screenshots are very welcome (paste or drag them in).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project…
+        2. Click …
+        3. See …
+  - type: input
+    id: version
+    attributes:
+      label: LaTeXDesk version
+      description: Help → About LaTeXDesk shows it. "Send Feedback" in the app fills this in.
+      placeholder: e.g. 0.7.1
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Editor (Code mode)
+        - Visual mode
+        - Compiling / PDF preview
+        - AI features
+        - Review tab (grammar, fact check, argument, bias)
+        - Proof tab
+        - Zotero / references
+        - Import / export
+        - Learn / Getting Started
+        - Something else
+  - type: textarea
+    id: log
+    attributes:
+      label: Error messages or compile log (optional)
+      render: text

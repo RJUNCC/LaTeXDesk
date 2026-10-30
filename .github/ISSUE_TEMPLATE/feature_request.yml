@@ -1,0 +1,20 @@
+name: Feature request
+description: An idea for something LaTeXDesk could do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like LaTeXDesk to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help you?
+      description: What are you working on, and what's hard about it today?
+  - type: input
+    id: version
+    attributes:
+      label: LaTeXDesk version (optional)
+      placeholder: e.g. 0.7.1

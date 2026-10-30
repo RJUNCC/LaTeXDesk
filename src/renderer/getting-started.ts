@@ -24,7 +24,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;
 /**
  * Open the dialog. `mode` is the current editor mode and `setMode` switches it; `firstRun` adds the welcome line.
  */
-export function openGettingStarted(opts: { mode: 'code' | 'visual'; setMode: (m: 'code' | 'visual') => void; firstRun?: boolean }) {
+export function openGettingStarted(opts: { mode: 'code' | 'visual'; setMode: (m: 'code' | 'visual') => void; firstRun?: boolean; onLearn?: () => void }) {
   dialog?.remove()
   dialog = document.createElement('dialog')
   dialog.id = 'getting-started'
@@ -45,6 +45,7 @@ export function openGettingStarted(opts: { mode: 'code' | 'visual'; setMode: (m:
         </button>
       </div>
       <p class="muted gs-note">You can switch any time with the Code | Visual buttons above the editor (Ctrl+Shift+E). The file is the same either way.</p>
+      <div class="gs-learn"><span><b>New to LaTeX?</b> Short hands-on lessons, and a tour of LaTeXDesk.</span><button type="button" class="gs-learn-btn">Open Learn</button></div>
       <h4>Your computer <button type="button" class="gs-recheck">Re-check</button></h4>
       <ul class="gs-checks"><li class="muted">Checking…</li></ul>
       <details class="gs-keys"><summary>Keyboard shortcuts</summary>
@@ -71,6 +72,11 @@ export function openGettingStarted(opts: { mode: 'code' | 'visual'; setMode: (m:
     }
   })
   q('.gs-recheck').onclick = () => void renderChecks()
+  q('.gs-learn-btn').onclick = () => {
+    dialog?.close()
+    opts.onLearn?.()
+  }
+  q('.gs-learn').hidden = !opts.onLearn
   dialog.addEventListener('close', () => dialog?.remove())
   dialog.showModal()
   void renderChecks()

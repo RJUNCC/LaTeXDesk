@@ -25,6 +25,27 @@ Optional extras, each shown in Getting Started:
 
 To keep it on the taskbar: right-click LaTeXDesk in the Start menu → **Pin to taskbar**.
 
+## New to LaTeX?
+
+Click **Learn** in the top bar (or press F1):
+- **Learn LaTeX:** 11 short hands-on lessons, covering:
+  - your first document, paragraphs and special characters;
+  - sections, emphasis, lists;
+  - maths, equations;
+  - tables, figures;
+  - citations, packages.
+
+  Each has a practice editor and a live PDF. Press **Check** to compile it and tick off the goals, with a hint
+  for anything not done yet. Progress is saved, and the practice files never touch your projects.
+- **How LaTeXDesk works:** short guides to every part of the app. **Show me** runs a guided tour that
+  highlights each control and explains it.
+
+Already have a document? **File → Import Document** (Ctrl+Shift+I) turns it into LaTeX:
+- **Word (.docx).** For **Google Docs**, use File → Download → Microsoft Word first.
+- **LibreOffice (.odt), Markdown and HTML.**
+- **What's kept:** headings, bold and italic, lists, tables, links, footnotes, images, and Word equations
+  (converted to LaTeX maths). Page layout, comments and tracked changes aren't carried over.
+
 ## Writing
 
 - **Visual or Code:** switch with the **Code | Visual** buttons above the editor (Ctrl+Shift+E). Visual shows
@@ -87,6 +108,16 @@ Your documents stay on your computer. Nothing is sent anywhere unless you use a 
 - paper search or the citation creator;
 - fact-checking an uncited claim against free web sources (only the claim text is sent);
 - choosing a cloud AI provider.
+
+## Feedback
+
+Feedback is very welcome:
+- **Something broken?** [Report a bug](https://github.com/RJUNCC/LaTeXDesk/issues/new?template=bug_report.yml).
+- **Have an idea?** [Suggest a feature](https://github.com/RJUNCC/LaTeXDesk/issues/new?template=feature_request.yml).
+- **Questions, tips, or just want to say what you think?** Join the [Discussions](https://github.com/RJUNCC/LaTeXDesk/discussions).
+
+In the app, the same links are under **Help → Report a Bug / Suggest a Feature**, and they fill in your version
+for you. You'll need a free GitHub account to post.
 
 ## Build from source
 

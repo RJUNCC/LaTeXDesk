@@ -15,6 +15,8 @@ includes code from Overleaf. It also bundles or uses the following.
 | [KaTeX](https://katex.org/) | MIT | Rendering maths in previews and the visual editor |
 | [math.js](https://mathjs.org/) | Apache-2.0 | Checking the algebra in proofs |
 | [jsdiff](https://github.com/kpdecker/jsdiff) | BSD-3-Clause | Reviewing proposed changes |
+| [mammoth](https://github.com/mwilliamson/mammoth.js) | BSD-2-Clause | Importing Word documents |
+| [marked](https://marked.js.org/) | MIT | Importing Markdown |
 | [fflate](https://github.com/101arrowz/fflate) | MIT | Export for submission (zip) |
 | [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) | Apache-2.0 | Optional Claude API access |
 | [Electron](https://www.electronjs.org/) | MIT | The desktop app shell |
