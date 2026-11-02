@@ -414,6 +414,9 @@ ipcMain.handle('zotero:retrieve', async (_e, question, k, citekeys) =>
   zotero.retrieve({ userData: app.getPath('userData'), ollamaUrl: await ollamaUrl(), question, k, citekeys })
 )
 ipcMain.handle('zotero:storage', () => zotero.storage())
+// Zotero's folders, for organising the Library tab (read-only)
+ipcMain.handle('zotero:collections', () => zotero.collections())
+ipcMain.handle('zotero:collection-items', (_e, key) => zotero.collectionItems(key))
 // PDFs Zotero hasn't extracted text from: the renderer reads them with pdf.js and hands the text back
 ipcMain.handle('zotero:missing-text', () => zotero.missingText({ userData: app.getPath('userData') }))
 ipcMain.handle('zotero:pdf-bytes', (_e, key) => zotero.pdfBytes({ userData: app.getPath('userData'), key }))

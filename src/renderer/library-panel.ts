@@ -1,9 +1,11 @@
-// The Library tab: your Zotero library (search, cite with one click) and "Ask my library", which answers
+// The Library tab: your Zotero library, shown by Zotero folder or as this project's papers (search, cite with one
+// click, or tick several to cite or add together), and "Ask my library", which answers
 // questions from the PDFs in Zotero using local embeddings + the local model, citing the papers it used.
 import { featureReady, runAi } from './ai-client'
 import type { AppHost } from './host'
 import { panelEl, whenShown } from './panels'
-import { Passage, ZItem, ZStorage, authorLine, citeFromZotero, libraryItems, onLibraryChange, refreshLibrary, searchLibrary, zotero, zoteroStatus } from './zotero-client'
+import { bibEntries } from './bib-project'
+import { Passage, ZFolder, ZItem, ZStorage, authorLine, citeFromZotero, ensureInBib, insertCite, libraryItems, onLibraryChange, refreshLibrary, zotero, zoteroStatus } from './zotero-client'
 
 let host: AppHost
 let asking: { cancel: () => void } | null = null
@@ -25,18 +27,35 @@ export function initLibrary(h: AppHost) {
         <div class="lib-answer"></div>
       </section>
       <section class="rs-section">
-        <h4>Search your library</h4>
-        <div class="rs-row"><input class="lib-search" placeholder="Title, author, year or citation key"></div>
+        <h4>Your library</h4>
+        <div class="rs-row lib-filter">
+          <select class="lib-folder" aria-label="Show papers from"></select>
+          <input class="lib-search" placeholder="Search: title, author, year or citation key">
+        </div>
+        <div class="lib-remembered muted"></div>
+        <div class="lib-bulk" hidden>
+          <span class="lib-bulk-count"></span>
+          <button class="primary lib-cite-selected" title="One \\cite{…} with all of them, at the cursor">Cite together</button>
+          <button class="lib-add-selected" title="Add them to the project's .bib without citing yet">Add to project</button>
+          <button class="lib-clear">Clear</button>
+        </div>
         <div class="lib-results"></div>
       </section>
     </div>`
   $<HTMLInputElement>('.lib-search').oninput = () => renderResults()
+  $<HTMLSelectElement>('.lib-folder').onchange = ev => void choose((ev.target as HTMLSelectElement).value)
+  $('.lib-cite-selected').onclick = () => void citeSelected(true)
+  $('.lib-add-selected').onclick = () => void citeSelected(false)
+  $('.lib-clear').onclick = () => (selected.clear(), renderResults())
+  host.onProjectOpened(() => void projectOpened())
+  // a compile or a cite can change which papers the project uses
+  host.onCompiled(() => void refreshProject())
   $('.lib-ask').onclick = () => (asking ? stop() : void ask())
   $<HTMLTextAreaElement>('.lib-q').onkeydown = ev => {
     if (ev.key === 'Enter' && !ev.shiftKey) (ev.preventDefault(), void ask())
   }
   zotero.onIndexProgress(p => ($('.lib-index').textContent = `Indexing your library… ${p.done} papers (${p.title.slice(0, 50)})`))
-  onLibraryChange(renderResults)
+  onLibraryChange(() => (renderFolders(), renderResults()))
   whenShown('library', () => void show())
 }
 
@@ -49,6 +68,111 @@ async function show() {
   else el.textContent = ''
   zotero.storage().then(showStorage, () => ($('.lib-storage').textContent = ''))
   await refreshLibrary()
+  if (st.localApi) folders = await zotero.collections().catch(() => folders)
+  renderFolders()
+  if (currentFolder() && !folderItems) await choose(view, false)
+  renderResults()
+}
+
+// ---------- which papers are shown: all, this project's, or one of your Zotero folders ----------
+
+let folders: ZFolder[] = []
+/** 'all', 'project', or a Zotero collection key */
+let view = 'all'
+/** item keys in the chosen folder and its subfolders */
+let folderItems: Set<string> | null = null
+/** citation keys in the project's .bib files */
+let projectKeys = new Set<string>()
+const selected = new Set<string>()
+
+type ViewSettings = { libraryViews?: Record<string, string> }
+const settingsBridge = (window as unknown as { texdesk: { getSettings(): Promise<ViewSettings>; setSettings(p: ViewSettings): Promise<void> } }).texdesk
+
+const currentFolder = () => folders.find(f => f.key === view)
+
+/** The folder and everything under it (Zotero shows subfolders' papers in a parent folder too). */
+function withSubfolders(key: string): string[] {
+  return [key, ...folders.filter(f => f.parent === key).flatMap(f => withSubfolders(f.key))]
+}
+
+async function refreshProject() {
+  projectKeys = new Set((await bibEntries(host).catch(() => new Map())).keys())
+  if (panelEl('library').offsetParent) renderResults()
+}
+
+/** A project opens on the view last used with it, else on its own papers if it has any. */
+async function projectOpened() {
+  selected.clear()
+  folderItems = null
+  await refreshProject()
+  const root = host.root()
+  const saved = root ? (await settingsBridge.getSettings()).libraryViews?.[root] : undefined
+  view = saved ?? (projectKeys.size ? 'project' : 'all')
+  renderFolders()
+  if (panelEl('library').offsetParent) await choose(view, false)
+}
+
+async function choose(v: string, remember = true) {
+  view = v
+  folderItems = null
+  renderFolders()
+  if (currentFolder()) {
+    $('.lib-results').replaceChildren(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'Loading the folder…' }))
+    try {
+      folderItems = new Set((await Promise.all(withSubfolders(v).map(k => zotero.collectionItems(k)))).flat())
+    } catch (e) {
+      folderItems = new Set()
+      host.setStatus(`Couldn’t read that Zotero folder: ${(e as Error).message}`, 'error')
+    }
+  }
+  const root = host.root()
+  if (remember && root) {
+    const views = (await settingsBridge.getSettings()).libraryViews ?? {}
+    await settingsBridge.setSettings({ libraryViews: { ...views, [root]: v } })
+  }
+  renderResults()
+}
+
+function renderFolders() {
+  const select = $<HTMLSelectElement>('.lib-folder')
+  const inProject = libraryItems().filter(i => projectKeys.has(i.citekey)).length
+  const options: HTMLOptionElement[] = [new Option(`All papers (${libraryItems().length})`, 'all'), new Option(`This project (${inProject})`, 'project')]
+  // folders as a tree, indented under their parents
+  const add = (parent: string | null, depth: number) => {
+    for (const f of folders.filter(f => f.parent === parent).sort((a, b) => a.name.localeCompare(b.name))) {
+      options.push(new Option(`${' '.repeat(depth)}${depth ? '└ ' : '📁 '}${f.name}`, f.key))
+      add(f.key, depth + 1)
+    }
+  }
+  add(null, 0)
+  select.replaceChildren(...options)
+  select.value = options.some(o => o.value === view) ? view : 'all'
+  const root = host.root()
+  $('.lib-remembered').textContent = root && currentFolder() ? `This project opens the Library on “${currentFolder()!.name}”.` : ''
+}
+
+function matches(i: ZItem, q: string) {
+  const hay = `${i.citekey} ${i.title} ${i.authors.join(' ')} ${i.year ?? ''}`.toLowerCase()
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))
+}
+
+/** Cite the ticked papers together (one \cite{a,b}), or only add them to the project's .bib. */
+async function citeSelected(cite: boolean) {
+  const keys = [...selected]
+  if (!keys.length) return
+  if (cite) insertCite(host, keys.join(','))
+  const added = await ensureInBib(host, keys)
+  host.setStatus(
+    cite
+      ? `Cited ${keys.length} paper${keys.length === 1 ? '' : 's'}${added.length ? `, ${added.length} added to the bibliography` : ''}`
+      : added.length
+        ? `Added ${added.length} paper${added.length === 1 ? '' : 's'} to the project’s bibliography`
+        : 'Those papers are already in the project’s bibliography',
+    'ok'
+  )
+  selected.clear()
+  await refreshProject()
+  renderFolders()
   renderResults()
 }
 
@@ -67,25 +191,65 @@ function showStorage(s: ZStorage) {
 function renderResults() {
   if (!host) return
   const q = $<HTMLInputElement>('.lib-search').value
-  const found = searchLibrary(q)
   const list = $('.lib-results')
+  renderBulk()
   if (!libraryItems().length) return list.replaceChildren(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'Your Zotero library will appear here.' }))
-  list.replaceChildren(
-    Object.assign(document.createElement('div'), { className: 'muted lib-count', textContent: q ? `${found.length} match${found.length === 1 ? '' : 'es'}` : `${libraryItems().length} items` }),
-    ...found.slice(0, 60).map(item)
-  )
+  const folder = currentFolder()
+  const pool = view === 'project' ? libraryItems().filter(i => projectKeys.has(i.citekey)) : folder ? libraryItems().filter(i => folderItems?.has(i.itemKey)) : libraryItems()
+  const found = q.trim() ? pool.filter(i => matches(i, q)) : pool
+  const where = view === 'project' ? 'in this project' : folder ? `in ${folder.name}` : 'in your library'
+  let count = q.trim() ? `${found.length} match${found.length === 1 ? '' : 'es'} ${where}` : `${pool.length} paper${pool.length === 1 ? '' : 's'} ${where}`
+  if (view === 'project') {
+    const notInZotero = [...projectKeys].filter(k => !libraryItems().some(i => i.citekey === k)).length
+    if (notInZotero) count += ` · ${notInZotero} more in the .bib aren’t in Zotero (see the Refs tab)`
+  }
+  const rows: HTMLElement[] = found.slice(0, 100).map(item)
+  // nothing here: offer the same search over the whole library
+  if (q.trim() && !found.length && view !== 'all') {
+    const elsewhere = libraryItems().filter(i => matches(i, q)).length
+    if (elsewhere) {
+      const all = button(`Search all papers (${elsewhere} match${elsewhere === 1 ? '' : 'es'})`, () => void choose('all', false), 'lib-search-all')
+      rows.push(all)
+    }
+  }
+  if (!pool.length) {
+    const empty = view === 'project' ? 'No papers from Zotero in this project yet. Cite one, or tick some and click Add to project.' : folder ? 'This folder is empty.' : ''
+    if (empty) rows.push(Object.assign(document.createElement('div'), { className: 'muted lib-empty', textContent: empty }))
+  }
+  list.replaceChildren(Object.assign(document.createElement('div'), { className: 'muted lib-count', textContent: count }), ...rows)
+}
+
+function renderBulk() {
+  $('.lib-bulk').hidden = selected.size === 0
+  $('.lib-bulk-count').textContent = `${selected.size} selected`
 }
 
 function item(i: ZItem) {
   const div = document.createElement('div')
-  div.className = 'rs-paper'
+  div.className = `rs-paper lib-item${selected.has(i.citekey) ? ' selected' : ''}`
+  const tick = Object.assign(document.createElement('input'), { type: 'checkbox', checked: selected.has(i.citekey), className: 'lib-tick', title: 'Select, to cite or add several at once' })
+  tick.setAttribute('aria-label', `Select ${i.title}`)
+  // only this row and the bar change, so the list keeps its scroll position while you tick down it
+  tick.onchange = () => {
+    if (tick.checked) selected.add(i.citekey)
+    else selected.delete(i.citekey)
+    div.classList.toggle('selected', tick.checked)
+    renderBulk()
+  }
+  const body = document.createElement('div')
+  body.className = 'lib-item-body'
   const title = Object.assign(document.createElement('div'), { className: 'rs-title', textContent: i.title })
+  if (view !== 'project' && projectKeys.has(i.citekey)) title.append(Object.assign(document.createElement('span'), { className: 'lib-in-project', textContent: 'in project' }))
   const meta = Object.assign(document.createElement('div'), { className: 'muted rs-meta', textContent: `${authorLine(i)} · ` })
   meta.append(Object.assign(document.createElement('code'), { textContent: i.citekey }))
   const acts = document.createElement('div')
   acts.className = 'rs-row'
-  acts.append(button('Cite', () => void citeFromZotero(host, i.citekey), 'primary'), button('Show in Zotero', () => window.open(`zotero://select/library/items/${i.itemKey}`)))
-  div.append(title, meta, acts)
+  acts.append(
+    button('Cite', () => void citeFromZotero(host, i.citekey).then(() => refreshProject().then(renderFolders)), 'primary'),
+    button('Show in Zotero', () => window.open(`zotero://select/library/items/${i.itemKey}`))
+  )
+  body.append(title, meta, acts)
+  div.append(tick, body)
   return div
 }
 

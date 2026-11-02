@@ -5,7 +5,9 @@ import type { AppHost } from './host'
 
 export type ZItem = { citekey: string; itemKey: string; title: string; authors: string[]; year: number | null; type?: string; doi?: string; url?: string; abstract?: string }
 export type ZStatus = { running: boolean; localApi: boolean; betterBibtex: boolean; version: string | null }
-export type Passage = { citekey: string; title: string; year: number | null; text: string; score: number }
+/** A Zotero collection (folder); `items` counts only what is directly in it. */
+export type ZFolder = { key: string; name: string; parent: string | null; items: number }
+export type Passage ={ citekey: string; title: string; year: number | null; text: string; score: number }
 
 type Bridge = {
   status(): Promise<ZStatus>
@@ -16,6 +18,10 @@ type Bridge = {
   retrieve(question: string, k?: number, citekeys?: string[]): Promise<{ passages: Passage[]; method: string }>
   onIndexProgress(cb: (p: { done: number; title: string }) => void): void
   storage(): Promise<ZStorage>
+  collections(): Promise<ZFolder[]>
+  collectionItems(key: string): Promise<string[]>
+  collections(): Promise<{ key: string; name: string; parent: string | null; items: number }[]>
+  collectionItems(key: string): Promise<string[]>
   missingText(): Promise<{ key: string; file: string }[]>
   pdfBytes(key: string): Promise<Uint8Array>
   saveText(key: string, text: string): Promise<void>

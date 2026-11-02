@@ -178,6 +178,31 @@ async function zoteroDataDir() {
 }
 
 /** How much the library stores, where, and whether PDFs count against the free 300 MB of Zotero file sync. */
+/** The library's collections (Zotero's folders), with their parents, for the Library tab. */
+async function collections() {
+  const out = []
+  for (let start = 0; ; start += 100) {
+    const { data, total } = await localApi(`collections?limit=100&start=${start}`)
+    out.push(...data.map(c => ({ key: c.key, name: c.data.name, parent: c.data.parentCollection || null, items: c.meta?.numItems ?? 0 })))
+    if (!data.length || out.length >= total) break
+  }
+  return out
+}
+
+/** The item keys directly in one collection (its subcollections are asked for separately). */
+async function collectionItems(key) {
+  if (!/^[A-Z0-9]{8}$/.test(key)) throw new Error('Not a Zotero collection key')
+  const keys = []
+  for (let start = 0; ; start += 100) {
+    const res = await fetch(`${BASE}/api/users/0/collections/${key}/items/top?format=keys&limit=100&start=${start}`, { signal: AbortSignal.timeout(15000) })
+    if (!res.ok) throw new Error(`Zotero local API answered HTTP ${res.status}`)
+    const batch = (await res.text()).split('\n').filter(Boolean)
+    keys.push(...batch)
+    if (batch.length < 100) break
+  }
+  return keys
+}
+
 async function storage() {
   const prefs = await zoteroPrefs()
   const dataDir = prefs.useDataDir !== false && prefs.dataDir ? prefs.dataDir : path.join(os.homedir(), 'Zotero')
@@ -354,4 +379,4 @@ async function retrieve({ userData, ollamaUrl, question, k = 8, perPaper = 3, ci
   return { passages, method }
 }
 
-module.exports = { status, search, exportBib, save, findItem, updateIndex, retrieve, toZoteroItem, embed, storage, missingText, pdfBytes, saveText, parsePrefs }
+module.exports = { status, search, exportBib, save, findItem, updateIndex, retrieve, toZoteroItem, embed, storage, collections, collectionItems, missingText, pdfBytes, saveText, parsePrefs }

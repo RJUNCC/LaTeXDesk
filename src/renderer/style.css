@@ -693,3 +693,19 @@ body.suggesting #editor { box-shadow: inset 0 2px 0 #c678dd; }
 .rv-card.a11y.tip { border-left: 3px solid #7cb7ff; }
 .a11y-detail { font-size: 12px; color: var(--muted); margin: 4px 0; line-height: 1.4; }
 .a11y-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* library: folders, this project, selecting several */
+.lib-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.lib-folder { max-width: 100%; min-width: 0; flex: 0 1 auto; }
+.lib-filter .lib-search { flex: 1 1 160px; min-width: 0; }
+.lib-remembered { font-size: 11px; margin: 2px 0 4px; }
+.lib-remembered:empty { display: none; }
+.lib-bulk { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; margin: 6px 0; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
+.lib-bulk-count { font-weight: 600; margin-right: auto; }
+.lib-item { display: flex; gap: 8px; align-items: flex-start; }
+.lib-item.selected { outline: 1px solid var(--accent); }
+.lib-tick { margin-top: 3px; flex-shrink: 0; }
+.lib-item-body { flex: 1; min-width: 0; }
+.lib-in-project { margin-left: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6cc66c; border: 1px solid #6cc66c55; border-radius: 3px; padding: 0 4px; vertical-align: 1px; }
+.lib-empty { padding: 8px 0; }
+.lib-search-all { margin: 6px 0; }

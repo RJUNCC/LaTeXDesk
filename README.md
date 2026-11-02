@@ -117,6 +117,9 @@ shown as a diff for you to approve.
 With Zotero running and Better BibTeX installed:
 - **Citing and syncing:** cite from your library, with `\cite{` autocomplete; keep the project's `.bib` in sync;
   save new papers to Zotero.
+- **Library tab:** browse by your **Zotero folders** (subfolders included), or **This project** (the papers the
+  document uses); each project remembers its folder. Tick several papers to cite them together or add them to the
+  project's `.bib`.
 - **References tab:** shows every reference in the project, with missing and unused ones.
 - **Ask my library:** answers questions from your PDFs, with citations.
 

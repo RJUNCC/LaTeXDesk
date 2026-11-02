@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('texdesk', {
     retrieve: (question, k, citekeys) => ipcRenderer.invoke('zotero:retrieve', question, k, citekeys),
     onIndexProgress: cb => ipcRenderer.on('zotero:index-progress', (_e, p) => cb(p)),
     storage: () => ipcRenderer.invoke('zotero:storage'),
+    collections: () => ipcRenderer.invoke('zotero:collections'),
+    collectionItems: key => ipcRenderer.invoke('zotero:collection-items', key),
     missingText: () => ipcRenderer.invoke('zotero:missing-text'),
     pdfBytes: key => ipcRenderer.invoke('zotero:pdf-bytes', key),
     saveText: (key, text) => ipcRenderer.invoke('zotero:save-text', key, text),
