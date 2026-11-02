@@ -338,6 +338,8 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     // links open in the browser; nothing else (file:, custom schemes) is handed to the OS
     if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+    // "Show in Zotero": only Zotero's own select-an-item links, nothing else under zotero://
+    else if (/^zotero:\/\/select\/library\/items\/[A-Z0-9]{8}$/.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
 }

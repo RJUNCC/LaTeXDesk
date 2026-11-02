@@ -232,7 +232,8 @@ export function withMetadata(text: string, title: string, lang = 'en-US') {
   const end = text.indexOf('\\begin{document}')
   const preamble = end < 0 ? text : text.slice(0, end)
   const lines: string[] = []
-  if (!/\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\bhyperref\b/.test(preamble)) lines.push('\\usepackage{hyperref}')
+  // hidelinks: without it, hyperref draws coloured boxes around every link, citation and reference
+  if (!/\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\bhyperref\b/.test(preamble)) lines.push('\\usepackage[hidelinks]{hyperref}')
   const keys = [/pdftitle\s*=/.test(preamble) ? '' : `pdftitle={${title.replace(/[{}\\]/g, '')}}`, /pdflang\s*=/.test(preamble) ? '' : `pdflang={${lang}}`, 'pdfdisplaydoctitle=true'].filter(Boolean)
   lines.push(`\\hypersetup{${keys.join(', ')}}`)
   const anchors = [...preamble.matchAll(/^\\(?:usepackage|documentclass)\b.*$/gm)]

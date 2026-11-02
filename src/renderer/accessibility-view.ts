@@ -1,6 +1,7 @@
 // The Accessibility view of the Review tab: runs the check (no AI needed), lists what it found with
 // one-click fixes, and underlines the places in the editor. Alt text can be suggested by the vision model.
 import { A11yIssue, checkAccessibility, withAlt, withHeaderRule, withMetadata } from './accessibility'
+import { EditorView } from '@codemirror/view'
 import { featureReady, runAi } from './ai-client'
 import type { AppHost } from './host'
 
@@ -80,7 +81,16 @@ async function edit(host: AppHost, file: string, change: (text: string) => strin
   const after = change(before)
   if (after === before) return
   await host.applyFileText(file, after)
-  host.setStatus(`${what} (Ctrl+Z undoes it)`, 'ok')
+  // show what changed: open the file with the new text selected
+  let start = 0
+  while (start < before.length && before[start] === after[start]) start++
+  let end = after.length
+  let endBefore = before.length
+  while (end > start && endBefore > start && after[end - 1] === before[endBefore - 1]) end--, endBefore--
+  await host.openFile(file)
+  host.view.dispatch({ selection: { anchor: start, head: end }, effects: EditorView.scrollIntoView(start, { y: 'center' }) })
+  host.view.focus()
+  host.setStatus(`${what}: the added text is selected (Ctrl+Z undoes it)`, 'ok')
   await runAccessibilityCheck(host, rerender)
 }
 
