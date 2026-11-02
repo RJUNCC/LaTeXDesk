@@ -1,5 +1,7 @@
 // The Review tab: one "Analyze" run (grammar → flow → claims → fact check → argument → bias), each step
-// incremental and saved as it goes, shown as four views: Writing · Fact check · Argument · Bias.
+// incremental and saved as it goes, shown as four views: Writing · Fact check · Argument · Bias. A fifth view,
+// Accessibility, has its own quick check (no AI).
+import { accessibilityView } from './accessibility-view'
 import { EditorState } from '@codemirror/state'
 import { LanguageSupport } from '@codemirror/language'
 import { LaTeXLanguage } from '../overleaf/latex-language'
@@ -15,7 +17,7 @@ import { panelEl, setBadge, whenShown } from './panels'
 import { plainText } from './prose'
 import { citeFromZotero } from './zotero-client'
 
-type View = 'writing' | 'facts' | 'argument' | 'bias'
+type View = 'writing' | 'facts' | 'argument' | 'bias' | 'access'
 
 let host: AppHost
 let graph: Graph | null = null
@@ -43,6 +45,7 @@ export function initReview(h: AppHost) {
       <button data-view="facts">Fact check</button>
       <button data-view="argument">Argument</button>
       <button data-view="bias">Bias</button>
+      <button data-view="access" title="Screen readers, contrast, alt text">Accessibility</button>
     </nav>
     <div class="rv-body"></div>`
   $('.rv-analyze').onclick = () => (job ? stop() : void analyze())
@@ -249,6 +252,7 @@ function render() {
   if (view === 'writing') body.replaceChildren(...writingView())
   else if (view === 'facts') body.replaceChildren(...factsView())
   else if (view === 'argument') body.replaceChildren(...argumentView())
+  else if (view === 'access') body.replaceChildren(...accessibilityView(host, render))
   else body.replaceChildren(...biasView())
 }
 

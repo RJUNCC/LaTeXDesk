@@ -1,7 +1,7 @@
 {
   "name": "latexdesk",
   "productName": "LaTeXDesk",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Desktop LaTeX editor built on Overleaf's open-source editor components",
   "license": "AGPL-3.0-only",
   "author": "RJUNCC",
@@ -17,7 +17,8 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "node build.mjs && electron .",
-    "dist": "node build.mjs --minify && electron-builder --win"
+    "dist": "node build.mjs --minify && electron-builder --win",
+    "release": "node build.mjs --minify && electron-builder --win --publish always"
   },
   "build": {
     "appId": "local.texdesk",
@@ -29,6 +30,9 @@
       "export.js",
       "zotero.js",
       "languagetool.js",
+      "tex.js",
+      "synctex.js",
+      "updater.js",
       "preload.js",
       "dist/**/*",
       "!dist/*.map",
@@ -45,11 +49,19 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "artifactName": "LaTeXDesk Setup ${version}.${ext}"
+      "artifactName": "LaTeXDesk-Setup-${version}.${ext}"
     },
     "directories": {
       "output": "release"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "RJUNCC",
+        "repo": "LaTeXDesk",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.4",
@@ -77,6 +89,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
+    "electron-updater": "^6.8.9",
     "fflate": "^0.8.3"
   }
 }

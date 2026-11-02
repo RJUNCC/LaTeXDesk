@@ -1,6 +1,6 @@
-// The tabbed right-hand pane: PDF | AI | Review | Proof | Tasks | References | Library | Research | History.
+// The tabbed right-hand pane: PDF | Comments | AI | Review | Proof | Tasks | References | Library | Research | History.
 
-export type PanelName = 'pdf' | 'ai' | 'review' | 'proof' | 'tasks' | 'references' | 'library' | 'research' | 'history'
+export type PanelName = 'pdf' | 'comments' | 'ai' | 'review' | 'proof' | 'tasks' | 'references' | 'library' | 'research' | 'history'
 
 const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('#side-tabs button[data-panel]')]
 const panels = () => [...document.querySelectorAll<HTMLElement>('.side-panel')]
@@ -29,7 +29,7 @@ export function whenShown(name: PanelName, fn: () => void) {
   onShow.set(name, fn)
 }
 
-export function setBadge(name: 'ai' | 'tasks' | 'refs' | 'review', count: number | string) {
+export function setBadge(name: 'ai' | 'tasks' | 'refs' | 'review' | 'comments', count: number | string) {
   const el = document.getElementById(`${name}-badge`)
   if (el) el.textContent = count ? String(count) : ''
 }

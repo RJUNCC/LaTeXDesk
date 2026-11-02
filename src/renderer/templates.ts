@@ -1,7 +1,10 @@
 // Starter documents for "New from Template". Only uses packages that ship with a basic MiKTeX/TeX Live.
+import { JOURNAL_TEMPLATES } from './journal-templates'
 
 export type Template = {
   id: string
+  /** heading in the template picker (General when not set) */
+  group?: string
   name: string
   description: string
   main: string
@@ -457,4 +460,5 @@ The second paragraph gives the details.
 `,
     },
   },
+  ...JOURNAL_TEMPLATES,
 ]

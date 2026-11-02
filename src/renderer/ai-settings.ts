@@ -1,5 +1,12 @@
-// AI settings: providers, keys, a model per feature, local model downloads, usage counter.
+// Settings: general (TeX engine, your name, updates), then AI: providers, keys, a model per feature, local model
+// downloads, usage counter.
 import { ai, AiConfig, AiFeature, AiProvider, aiConfig, runAi, setConfigCache } from './ai-client'
+import { installBuiltInTex, texStatus } from './tex-setup'
+import { checkForUpdates } from './updates'
+
+type GeneralSettings = { texEngine?: 'auto' | 'system' | 'tectonic'; authorName?: string; autoUpdate?: boolean }
+type Bridge = { getSettings(): Promise<GeneralSettings>; setSettings(p: GeneralSettings): Promise<void>; appInfo(): Promise<{ user: string }> }
+const bridge = (window as unknown as { texdesk: Bridge }).texdesk
 
 const FEATURES: { id: AiFeature; label: string; hint: string; needs?: string }[] = [
   { id: 'autocomplete', label: 'Autocomplete', hint: 'Grey inline suggestions while you type (Tab accepts). Needs a fast model.', needs: 'insert' },
@@ -56,7 +63,20 @@ function buildDialog() {
   dlg.id = 'ai-settings'
   dlg.className = 'wide ai-settings'
   dlg.innerHTML = `
-    <h3>AI settings</h3>
+    <h3>Settings</h3>
+    <section class="as-section as-general">
+      <h4>General</h4>
+      <div class="as-row"><label>TeX engine</label><select class="as-engine">
+        <option value="auto">Automatic: installed TeX if there is one, else built-in</option>
+        <option value="system">Installed TeX (MiKTeX or TeX Live)</option>
+        <option value="tectonic">Built-in (Tectonic)</option>
+      </select><button type="button" class="as-tex-install" hidden>Set up built-in TeX</button></div>
+      <div class="as-tex-status muted"></div>
+      <div class="as-row"><label>Your name</label><input class="as-author" placeholder="shown on your comments and suggested changes"></div>
+      <div class="as-row"><label class="check"><input type="checkbox" class="as-autoupdate"> Check for updates automatically</label><button type="button" class="as-check-updates">Check now</button></div>
+    </section>
+
+    <h3>AI</h3>
     <label class="check as-master"><input type="checkbox" class="as-enabled"> Use AI features</label>
     <p class="muted">Local models run on your own GPU through Ollama: free and private. Cloud providers are optional and cost tokens per request.</p>
 
@@ -212,6 +232,44 @@ export async function openAiSettings(onChange: () => void = () => {}) {
     )
     q('.as-usage').textContent = rows.length ? rows.join(' · ') : 'No AI requests yet.'
   }
+
+  // ----- general -----
+  const general = await bridge.getSettings()
+  const engine = q<HTMLSelectElement>('.as-engine')
+  engine.value = general.texEngine ?? 'auto'
+  async function renderTex() {
+    const t = await texStatus()
+    q('.as-tex-status').textContent =
+      (t.engine === 'tectonic' ? 'Compiling with the built-in engine.' : t.engine === 'system' ? `Compiling with ${t.system}.` : 'No TeX engine available for this choice yet.') +
+      (t.tectonic ? '' : ` The built-in engine isn't set up (about ${Math.round(t.downloadBytes / 1e6)} MB).`) +
+      (t.engine === 'tectonic' && !t.biber ? ' Documents using biblatex need biber, which it doesn’t include.' : '')
+    q<HTMLButtonElement>('.as-tex-install').hidden = t.tectonic
+  }
+  engine.onchange = async () => {
+    await bridge.setSettings({ texEngine: engine.value as GeneralSettings['texEngine'] })
+    await renderTex()
+  }
+  q<HTMLButtonElement>('.as-tex-install').onclick = async ev => {
+    const b = ev.target as HTMLButtonElement
+    b.disabled = true
+    try {
+      await installBuiltInTex(text => (q('.as-tex-status').textContent = text))
+    } catch (e) {
+      q('.as-tex-status').textContent = `⚠ ${(e as Error).message}`
+      b.disabled = false
+      return
+    }
+    b.disabled = false
+    await renderTex()
+  }
+  const author = q<HTMLInputElement>('.as-author')
+  author.value = general.authorName ?? (await bridge.appInfo()).user ?? ''
+  author.onchange = () => bridge.setSettings({ authorName: author.value.trim() })
+  const autoUpdate = q<HTMLInputElement>('.as-autoupdate')
+  autoUpdate.checked = general.autoUpdate !== false
+  autoUpdate.onchange = () => bridge.setSettings({ autoUpdate: autoUpdate.checked })
+  q<HTMLButtonElement>('.as-check-updates').onclick = () => void checkForUpdates()
+  void renderTex()
 
   // ----- wiring -----
   const enabled = q<HTMLInputElement>('.as-enabled')

@@ -9,11 +9,17 @@ free software (AGPL-3.0).
 
 ## Install
 
-1. Download **`LaTeXDesk Setup x.y.z.exe`** from the [Releases](https://github.com/RJUNCC/LaTeXDesk/releases) page and run it.
+1. Download **`LaTeXDesk-Setup-x.y.z.exe`** from the [Releases](https://github.com/RJUNCC/LaTeXDesk/releases) page and run it.
    Windows may say *"Windows protected your PC"* because the app isn't code-signed: click **More info → Run anyway**.
-2. Install **[MiKTeX](https://miktex.org/download)** (free). It turns your document into a PDF. During setup,
-   choose **"Install missing packages on-the-fly: Yes"**.
-3. Open LaTeXDesk. The **Getting Started** screen (also under Help) shows what's set up and links to the rest.
+2. Open LaTeXDesk and compile. If your computer has no TeX yet, LaTeXDesk offers its **built-in engine**
+   ([Tectonic](https://tectonic-typesetting.github.io/), about 20 MB, one click). It downloads the LaTeX packages a
+   document needs the first time they're used, so the first compile needs the internet.
+   Prefer a full distribution? Install **[MiKTeX](https://miktex.org/download)** and choose **"Install missing packages
+   on-the-fly: Yes"**. LaTeXDesk uses it automatically (Settings → TeX engine to choose).
+3. The **Getting Started** screen (also under Help) shows what's set up and links to the rest.
+
+LaTeXDesk **updates itself**: when a new version is out, a notice offers to download it, and it installs when you
+close the app. Turn this off in Settings, or use Help → Check for Updates.
 
 Optional extras, each shown in Getting Started:
 
@@ -28,12 +34,14 @@ To keep it on the taskbar: right-click LaTeXDesk in the Start menu → **Pin to 
 ## New to LaTeX?
 
 Click **Learn** in the top bar (or press F1):
-- **Learn LaTeX:** 11 short hands-on lessons, covering:
+- **Learn LaTeX:** 15 short hands-on lessons, covering:
   - your first document, paragraphs and special characters;
   - sections, emphasis, lists;
   - maths, equations;
   - tables, figures;
-  - citations, packages.
+  - citations and citation styles, packages;
+  - long documents (several files, cross-references, contents);
+  - slides (Beamer) and diagrams (TikZ).
 
   Each has a practice editor and a live PDF. Press **Check** to compile it and tick off the goals, with a hint
   for anything not done yet. Progress is saved, and the practice files never touch your projects.
@@ -55,15 +63,27 @@ Already have a document? **File → Import Document** (Ctrl+Shift+I) turns it in
   (grid picker), figures, links, footnotes, citations and references. Any package these need is added for you.
 - **Paste from Word, Google Docs or the web:** in Visual mode, formatting (headings, bold, lists, links, tables)
   is converted to LaTeX.
-- **Templates** (File → New from Template): article, report/thesis, slides (Beamer), homework, lab report, letter, CV.
+- **Templates** (File → New from Template): article, report, slides (Beamer), homework, lab report, letter, CV;
+  papers for **IEEE, ACM, APA 7, Springer LNCS and Elsevier**; and a **thesis** with chapters in their own files.
 - **PDF preview** with zoom, and jump between the source and the PDF (Ctrl+Alt+J, or double-click the PDF).
 - **Spell check** (offline, with a scientific word list) and **equation preview** as you type.
 - **History:** a snapshot after every successful compile, with side-by-side comparison and restore.
 - **Tables and plots from data:** paste CSV or Excel cells to make a table or a chart.
 - **Markov chain builder:** draw a chain; get a TikZ diagram, the transition matrix and, for absorbing chains,
   exact absorption probabilities and expected steps.
+- **Export to Word** (File menu): a .docx with headings, lists, tables, pictures (PDF figures too), footnotes,
+  numbered references and **editable Word equations**, for people who don't use LaTeX.
 - **Export for submission:** one zip with `\input`s flattened, comments removed and only the files used,
   test-compiled first.
+
+## Working with others
+
+- **Comments:** select text and click 💬 (Ctrl+Alt+M). Reply, resolve, and see them all in the **Comments** tab.
+- **Suggest changes** (track changes): turn on **Suggest** above the editor, and your edits show as suggestions
+  (insertions highlighted, deletions struck through) for the author to accept or reject.
+- They're saved in the project's hidden `.texdesk` folder, so sharing the folder (zip, OneDrive, Dropbox) shares
+  them too. Set your name in Settings.
+- **Export to Word** includes them as Word comments and tracked changes, for reviewers who use Word.
 
 ## AI (local by default, free)
 
@@ -79,7 +99,9 @@ shown as a diff for you to approve.
   - **fact check** against the papers you cite and your Zotero library;
   - **argument check**: contradictions, circular reasoning, number mismatches, overclaiming, conclusions that
     don't follow;
-  - a **bias matrix**.
+  - a **bias matrix**;
+  - **accessibility** (no AI needed): picture descriptions for screen readers, the PDF's title and language,
+    colour contrast, heading order and link text, mostly with one-click fixes.
 - **Proof tab:**
   - turns a theorem into ordered proof steps;
   - **checks proofs step by step**: algebra is verified exactly by maths (with counterexamples), and logic is
@@ -107,7 +129,9 @@ a large drive. The Library tab shows your storage use.
 Your documents stay on your computer. Nothing is sent anywhere unless you use a feature that needs the internet:
 - paper search or the citation creator;
 - fact-checking an uncited claim against free web sources (only the claim text is sent);
-- choosing a cloud AI provider.
+- choosing a cloud AI provider;
+- the built-in TeX engine downloading a package a document needs (only package names are sent);
+- checking GitHub for a new version of LaTeXDesk (can be turned off in Settings).
 
 ## Feedback
 
@@ -128,6 +152,11 @@ npm install
 npm start          # build and run
 npm run dist       # installer in release/
 ```
+
+**Publishing a release** (so installed copies update themselves): bump `version` in `package.json`, run
+`npm run dist`, then on GitHub draft a release tagged `vX.Y.Z` and attach all three files from `release/`:
+`LaTeXDesk-Setup-X.Y.Z.exe`, its `.blockmap` and `latest.yml`. (Or set a `GH_TOKEN` and run `npm run release`,
+which uploads them to a draft release for you.)
 
 The code is organised like this:
 - `main.js`: the Electron main process (compiling, files, AI providers, Zotero, LanguageTool).

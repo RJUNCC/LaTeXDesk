@@ -10,7 +10,9 @@ import LatexParser from '../overleaf/latex-log-parser'
 import { LaTeXLanguage } from '../overleaf/latex-language'
 import { highlightStyle, theme } from './editor-theme'
 import { LESSONS, Lesson, PRACTICE_BIB } from './learn-lessons'
+import { PRACTICE_CHAPTER } from './learn-lessons-more'
 import { TOPICS, runTour } from './learn-tour'
+import { offerTexSetup } from './tex-setup'
 import { PdfViewer } from './pdf-viewer'
 
 export type LearnDeps = {
@@ -178,6 +180,7 @@ async function openLesson(l: Lesson) {
   editor.setState(EditorState.create({ doc: saved ?? l.starter, extensions: extensions() }))
   // the practice folder gets whatever this lesson's exercises refer to
   if (l.files?.includes('bib')) await deps.writeFile(root, 'refs.bib', PRACTICE_BIB)
+  if (l.files?.includes('chapter')) await deps.writeFile(root, 'results.tex', PRACTICE_CHAPTER)
   if (l.files?.includes('image')) await deps.writeBinary(root, 'picture.png', practiceImage())
   $('.learn-title').textContent = `${LESSONS.indexOf(l) + 1}. ${l.title}`
   $('.learn-intro').innerHTML = l.intro
@@ -215,7 +218,7 @@ async function check() {
   const slow = window.setTimeout(() => {
     const result = $('.learn-result')
     result.className = 'learn-result'
-    result.textContent = 'Still compiling… the first time can take a minute while MiKTeX installs what it needs.'
+    result.textContent = 'Still compiling… the first time can take a minute while the LaTeX packages it needs are downloaded.'
   }, 8000)
   try {
     const src = editor.state.doc.toString()
@@ -231,7 +234,7 @@ async function check() {
     const r = await deps.compile(root, fileFor(lesson))
     const errors = r.missingTex ? [] : new LatexParser(r.log, { ignoreDuplicates: true }).parse().errors
     const compiled = r.missingTex
-      ? { ok: false, message: 'No TeX installation found: install MiKTeX (Help → Getting Started).' }
+      ? { ok: false, message: 'No TeX engine yet: set one up to make PDFs (Help → Getting Started).' }
       : errors.length
         ? { ok: false, message: `${errors[0].message}${errors[0].line ? ` (line ${errors[0].line})` : ''}` }
         : r.pdf
@@ -242,6 +245,8 @@ async function check() {
       await pdf.load(new Uint8Array(r.pdf))
     }
     renderGoals(results, compiled)
+    // set up the built-in engine, then check again
+    if (r.missingTex) void offerTexSetup(() => void check())
     const all = results.every(x => x.ok) && compiled.ok
     const result = $('.learn-result')
     if (all) {

@@ -38,7 +38,7 @@
       <ul id="outline"></ul>
     </aside>
     <section id="editor-pane">
-      <div class="pane-title"><span id="current-file"></span><div id="mode-switch" class="mode-switch" hidden title="Code shows the LaTeX; Visual shows it formatted, like a word processor (Ctrl+Shift+E)"><button data-mode="code">Code</button><button data-mode="visual">Visual</button></div></div>
+      <div class="pane-title"><span id="current-file"></span><div class="spacer"></div><button id="comment-btn" class="icon" title="Comment on the selected text (Ctrl+Alt+M)">💬</button><button id="suggest-btn" class="suggest-toggle" title="Suggest changes (track changes)">✎ Suggest</button><div id="mode-switch" class="mode-switch" hidden title="Code shows the LaTeX; Visual shows it formatted, like a word processor (Ctrl+Shift+E)"><button data-mode="code">Code</button><button data-mode="visual">Visual</button></div></div>
       <div id="format-bar" class="format-bar"></div>
       <div id="editor"></div>
     </section>
@@ -46,6 +46,7 @@
     <section id="pdf-pane">
       <nav id="side-tabs" class="side-tabs">
         <button data-panel="pdf" class="active">PDF</button>
+        <button data-panel="comments" title="Comments and suggested changes">Comments <span class="badge" id="comments-badge"></span></button>
         <button data-panel="ai">AI <span class="badge" id="ai-badge"></span></button>
         <button data-panel="review" title="Grammar, flow, fact check, argument and bias">Review <span class="badge error" id="review-badge"></span></button>
         <button data-panel="proof" title="Build and check proofs step by step">Proof</button>
@@ -76,6 +77,7 @@
           <pre id="raw-log" hidden></pre>
         </div>
       </div>
+      <div class="side-panel" data-panel="comments" hidden></div>
       <div class="side-panel" data-panel="ai" hidden></div>
       <div class="side-panel" data-panel="review" hidden></div>
       <div class="side-panel" data-panel="proof" hidden></div>

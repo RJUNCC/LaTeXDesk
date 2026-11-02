@@ -1,5 +1,6 @@
 // The LaTeX lessons in the Learn view: a short explanation, a practice document, goals that are checked
 // automatically (every lesson also has to compile without errors), a hint per goal and a model solution.
+import { BIBSTYLE_LESSON, MORE_LESSONS } from './learn-lessons-more'
 
 export type Goal = { text: string; hint: string; test: (body: string, source: string) => boolean }
 export type Lesson = {
@@ -11,7 +12,7 @@ export type Lesson = {
   solution: string
   goals: Goal[]
   /** extra files the practice folder needs */
-  files?: ('image' | 'bib')[]
+  files?: ('image' | 'bib' | 'chapter')[]
 }
 
 const doc = (body: string, preamble = '') => `\\documentclass{article}\n${preamble}\\begin{document}\n\n${body.trim()}\n\n\\end{document}\n`
@@ -214,6 +215,7 @@ As equation~\\ref{eq:energy} shows…</pre>
       { text: 'Print the reference list from refs.bib', hint: '\\bibliography{refs}', test: has(/\\bibliography\{refs\}/) },
     ],
   },
+  BIBSTYLE_LESSON,
   {
     id: 'packages',
     title: 'Packages and your own commands',
@@ -233,13 +235,21 @@ As equation~\\ref{eq:energy} shows…</pre>
       { text: 'Colour some text with xcolor', hint: '\\usepackage{xcolor}, then \\textcolor{blue}{…}.', test: (b, s) => /\\usepackage(\[[^\]]*\])?\{[^}]*xcolor[^}]*\}/.test(s) && /\\textcolor\{[^}]+\}\{[^}]+\}/.test(b) },
     ],
   },
+  ...MORE_LESSONS,
 ]
 
-/** refs.bib for the citations lesson */
+/** refs.bib for the citation lessons */
 export const PRACTICE_BIB = `@book{knuth1984,
   author    = {Donald E. Knuth},
   title     = {The {\\TeX}book},
   publisher = {Addison-Wesley},
   year      = {1984}
+}
+
+@book{lamport1986,
+  author    = {Leslie Lamport},
+  title     = {{\\LaTeX}: A Document Preparation System},
+  publisher = {Addison-Wesley},
+  year      = {1986}
 }
 `

@@ -48,6 +48,11 @@ import { initTasks } from './tasks'
 import { equationPreview, setPreambleMacros } from './equation-preview'
 import { openGettingStarted, showAbout } from './getting-started'
 import { importDocument } from './import-doc'
+import { offerTexSetup } from './tex-setup'
+import { checkForUpdates, initUpdates } from './updates'
+import { initComments, loadReview, persist as persistReview, refreshComments, reviewExtension, startComment, toggleSuggest } from './comments-panel'
+import { acceptChanges, rejectChanges, reviewOf } from './track-changes'
+import { exportWord } from './export-word'
 import { initLearn, openLearn } from './learn'
 import { contentWidth, isVisual, projectImages, setVisual, sourceOnly, visual, visualCapable, visualPhrases } from './visual-mode'
 import { imageFrom, imageToLatex, initResearch } from './research-panel'
@@ -77,7 +82,8 @@ declare global {
       importChoose(): Promise<{ name: string; base64: string } | null>
       importCopyImage(rel: string, root: string, destRel: string): Promise<void>
       learnFolder(name: 'practice' | 'tour'): Promise<string>
-      compile(root: string, main: string): Promise<{ ok: boolean; log: string; pdf: Uint8Array | null; engine: string; cancelled: boolean; timedOut: boolean; missingTex?: boolean }>
+      appInfo(): Promise<{ name: string; version: string; user: string }>
+      compile(root: string, main: string): Promise<{ ok: boolean; log: string; pdf: Uint8Array | null; engine: string; cancelled: boolean; timedOut: boolean; missingTex?: boolean; hint?: string | null }>
       cancelCompile(): Promise<void>
       synctex(root: string, main: string, args: object): Promise<any>
       onMenu(cb: (channel: string) => void): void
@@ -99,6 +105,12 @@ type Settings = {
   welcomed?: boolean
   /** ids of the Learn lessons completed */
   learnDone?: string[]
+  /** which TeX compiles: an installed distribution, the built-in engine, or whichever is available */
+  texEngine?: 'auto' | 'system' | 'tectonic'
+  /** check GitHub for new versions (on by default) */
+  autoUpdate?: boolean
+  /** shown on comments and suggested changes */
+  authorName?: string
 }
 
 const api = window.texdesk
@@ -177,7 +189,7 @@ function renderModeSwitch() {
   for (const b of sw.querySelectorAll<HTMLButtonElement>('button')) b.classList.toggle('active', b.dataset.mode === (visualOn() ? 'visual' : 'code'))
 }
 
-function extensions(path: string): Extension[] {
+function extensions(path: string, doc = ''): Extension[] {
   const isTex = /\.(tex|sty|cls)$/i.test(path)
   return [
     lineNumbers(),
@@ -204,12 +216,15 @@ function extensions(path: string): Extension[] {
     // ghost-text completion and hover previews are for the LaTeX source; Visual mode shows the result itself
     isTex ? (visualCapable(path) ? sourceOnly(visualOn(), [aiAutocomplete(), equationPreview()]) : [aiAutocomplete(), equationPreview()]) : [],
     visualCapable(path) ? [visual(path, visualOn()), projectImages(() => files), contentWidth, visualPhrases] : [],
+    // comments and suggested changes (any text file)
+    reviewExtension(path, doc),
     keymap.of([
       { key: 'Mod-s', run: () => (save().then(() => maybeCompile(true)), true) },
       { key: 'Mod-Enter', run: () => (compile(), true) },
       { key: 'Mod-/', run: toggleComment },
       { key: 'Mod-b', run: v => toggleCommand(v, 'textbf') },
       { key: 'Mod-i', run: v => toggleCommand(v, 'textit') },
+      { key: 'Mod-Alt-m', run: () => (void startComment(), true) },
       indentWithTab,
       ...closeBracketsKeymap,
       ...defaultKeymap,
@@ -354,6 +369,8 @@ async function openProject(dir: string, offerTemplates = true) {
   root = dir
   states.clear()
   dirty.clear()
+  // comments and suggestions are attached to files as they open, so read them first
+  await loadReview()
   projectSymbols.labels.clear()
   projectSymbols.bibKeys.clear()
   logEntries = []
@@ -444,7 +461,7 @@ async function openFile(path: string, line?: number) {
   let state = states.get(path)
   if (!state) {
     const doc = await api.readFile(root, path)
-    state = EditorState.create({ doc, extensions: extensions(path) })
+    state = EditorState.create({ doc, extensions: extensions(path, doc) })
   }
   currentPath = path
   view.setState(state)
@@ -457,6 +474,7 @@ async function openFile(path: string, line?: number) {
   renderFileList()
   renderOutline()
   refreshDiagnostics()
+  refreshComments()
   if (line) goToLine(line)
   view.focus()
 }
@@ -477,6 +495,8 @@ async function save() {
     dirty.delete(path)
     indexProjectText(path, text)
   }
+  // comment and suggestion positions match the text just saved
+  await persistReview()
   renderFileList()
 }
 
@@ -522,8 +542,15 @@ function showTemplates() {
   $('template-target').textContent = root
     ? `Files will be created in ${root}`
     : 'You will be asked to choose a folder for the new project.'
+  // under headings: General, Journals and conferences, University
+  const groups = [...new Set(TEMPLATES.map(t => t.group ?? 'General'))]
   $('template-list').replaceChildren(
-    ...TEMPLATES.map(t => {
+    ...groups.flatMap(g => [Object.assign(document.createElement('h4'), { className: 'template-group', textContent: g }), ...cards(TEMPLATES.filter(t => (t.group ?? 'General') === g))])
+  )
+  dlg.showModal()
+
+  function cards(list: Template[]) {
+    return list.map(t => {
       const card = document.createElement('button')
       card.type = 'button'
       card.className = 'template-card'
@@ -540,8 +567,7 @@ function showTemplates() {
       }
       return card
     })
-  )
-  dlg.showModal()
+  }
 }
 
 async function createFromTemplate(t: Template) {
@@ -634,9 +660,9 @@ async function compile() {
   btn.lastChild!.textContent = 'Stop'
   btn.title = 'Stop compiling'
   setStatus('Compiling…')
-  // MiKTeX silently downloads missing packages on first use, which can take minutes
+  // MiKTeX and the built-in engine download missing packages on first use, which can take minutes
   const slowTimer = window.setTimeout(
-    () => setStatus('Still compiling… MiKTeX may be installing missing packages (first use only)', 'warn'),
+    () => setStatus('Still compiling… LaTeX packages this document needs are being downloaded (first use only)', 'warn'),
     12000
   )
   try {
@@ -656,9 +682,9 @@ async function compile() {
     const result = await api.compile(root, target)
     if (result.missingTex) {
       compileQueued = false
-      setStatus('No TeX installation found. Install MiKTeX to make PDFs (Help → Getting Started).', 'error')
-      // explain once per session; after that the status line is enough
-      if (!texHelpShown) (texHelpShown = true), gettingStarted()
+      setStatus('No TeX engine yet: set one up to make PDFs (Help → Getting Started).', 'error')
+      // offer once per session; after that the status line is enough
+      if (!texHelpShown) (texHelpShown = true), void offerTexSetup(() => void compile())
       return
     }
     if (result.cancelled) {
@@ -678,7 +704,8 @@ async function compile() {
     const secs = ((performance.now() - started) / 1000).toFixed(1)
     const errs = parsed.errors.length
     const warns = parsed.warnings.length + parsed.typesetting.length
-    if (errs) setStatus(`${errs} error${errs > 1 ? 's' : ''}, ${warns} warnings · ${result.engine} · ${secs}s`, 'error')
+    if (result.hint && (errs || !result.pdf)) setStatus(result.hint, 'error')
+    else if (errs) setStatus(`${errs} error${errs > 1 ? 's' : ''}, ${warns} warnings · ${result.engine} · ${secs}s`, 'error')
     else if (!result.pdf) setStatus(`Compile failed · see logs`, 'error')
     else setStatus(`Compiled · ${warns} warnings · ${result.engine} · ${secs}s`, warns ? 'warn' : 'ok')
     $('log-count').textContent = String(errs || warns || '')
@@ -933,10 +960,17 @@ api.onMenu(channel => {
     case 'sync-forward': return syncForward()
     case 'toggle-logs': return toggleLogs()
     case 'export': return void exportForSubmission()
+    case 'export-word': return void exportToWord()
     case 'getting-started': return gettingStarted()
     case 'learn': return void openLearn()
     case 'import': return void importDoc()
     case 'about': return void showAbout()
+    case 'check-updates': return void checkForUpdates()
+    case 'add-comment': return void startComment()
+    case 'toggle-suggest': return void toggleSuggest()
+    case 'accept-all': return acceptChanges(view, reviewOf(view.state).changes.map(c => c.id))
+    case 'reject-all': return rejectChanges(view, reviewOf(view.state).changes.map(c => c.id))
+    case 'show-comments': return showPanel('comments')
     case 'toggle-visual': return setEditorMode(visualOn() ? 'code' : 'visual')
     case 'settings': return openAiSettings()
     case 'toggle-spell': {
@@ -979,20 +1013,22 @@ const projectListeners: (() => void)[] = []
 /** Replace a file's text: through the editor when it's open (undoable), else its buffer, else disk. */
 async function applyFileText(path: string, text: string) {
   if (!root) return
-  if (path === currentPath) {
-    // narrow the change to the differing middle so the cursor and undo history stay sensible
-    const old = view.state.doc.toString()
+  // narrow the change to the differing middle so the cursor, undo history, comments and suggestions stay sensible
+  const narrowed = (old: string) => {
     let start = 0
     while (start < old.length && start < text.length && old[start] === text[start]) start++
     let endOld = old.length
     let endNew = text.length
     while (endOld > start && endNew > start && old[endOld - 1] === text[endNew - 1]) endOld--, endNew--
-    view.dispatch({ changes: { from: start, to: endOld, insert: text.slice(start, endNew) }, userEvent: 'input.ai', scrollIntoView: true })
+    return { from: start, to: endOld, insert: text.slice(start, endNew) }
+  }
+  if (path === currentPath) {
+    view.dispatch({ changes: narrowed(view.state.doc.toString()), userEvent: 'input.ai', scrollIntoView: true })
     return
   }
   const state = states.get(path)
   if (state) {
-    states.set(path, state.update({ changes: { from: 0, to: state.doc.length, insert: text } }).state)
+    states.set(path, state.update({ changes: narrowed(state.doc.toString()), userEvent: 'input.ai' }).state)
     dirty.add(path)
     await save()
   } else {
@@ -1064,6 +1100,20 @@ async function exportForSubmission(zipPath?: string): Promise<ExportReport | nul
 }
 ;(window as unknown as { __texdeskExport: unknown }).__texdeskExport = exportForSubmission
 
+/** File → Export to Word, for the document that gets compiled. */
+async function exportToWord(savePath?: string) {
+  const target = (await resolveRootDoc()) ?? mainFile
+  if (!root || !target) return null
+  try {
+    return await exportWord(host, target, savePath)
+  } catch (e) {
+    setStatus(`Couldn't export to Word: ${(e as Error).message}`, 'error')
+    return null
+  }
+}
+// UI-test hook
+;(window as unknown as { __texdeskExportWord: unknown }).__texdeskExportWord = exportToWord
+
 /** Give the equation preview the root document's \newcommand macros. */
 async function refreshMacros() {
   const rootDoc = await resolveRootDoc().catch(() => null)
@@ -1085,6 +1135,7 @@ projectListeners.push(() => void refreshMacros())
   settings.autoCompile = autoBox.checked
   initSplitter()
   initPanels()
+  initUpdates(save)
   initAiPanel(host)
   initTasks(host)
   initResearch(host)
@@ -1093,6 +1144,13 @@ projectListeners.push(() => void refreshMacros())
   initLibrary(host)
   initReview(host)
   initProof(host)
+  initComments(host, {
+    stateOf: p => (p === currentPath ? view.state : states.get(p)),
+    // the name in Settings, else the Windows user name
+    author: async () => (await api.getSettings()).authorName?.trim() || (await api.appInfo()).user || 'Me',
+  })
+  $('comment-btn').onclick = () => void startComment()
+  $('suggest-btn').onclick = () => void toggleSuggest()
   initLearn({
     sandbox: () => api.learnFolder('practice'),
     readFileOptional: (dir, rel) => api.readFileOptional(dir, rel),

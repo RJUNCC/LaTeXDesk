@@ -17,7 +17,8 @@ includes code from Overleaf. It also bundles or uses the following.
 | [jsdiff](https://github.com/kpdecker/jsdiff) | BSD-3-Clause | Reviewing proposed changes |
 | [mammoth](https://github.com/mwilliamson/mammoth.js) | BSD-2-Clause | Importing Word documents |
 | [marked](https://marked.js.org/) | MIT | Importing Markdown |
-| [fflate](https://github.com/101arrowz/fflate) | MIT | Export for submission (zip) |
+| [fflate](https://github.com/101arrowz/fflate) | MIT | Export for submission (zip), Export to Word (.docx) |
+| [electron-updater](https://github.com/electron-userland/electron-builder) | MIT | Automatic updates from GitHub Releases |
 | [Anthropic TypeScript SDK](https://github.com/anthropics/anthropic-sdk-typescript) | Apache-2.0 | Optional Claude API access |
 | [Electron](https://www.electronjs.org/) | MIT | The desktop app shell |
 
@@ -26,6 +27,7 @@ includes code from Overleaf. It also bundles or uses the following.
 | Component | License | Notes |
 |---|---|---|
 | [LanguageTool](https://languagetool.org/) | LGPL-2.1 | Downloaded on request for grammar checking, runs locally |
+| [Tectonic](https://tectonic-typesetting.github.io/) | MIT | The built-in TeX engine: downloaded on request and checked against a fixed checksum. It downloads TeX Live packages (various free licenses) as documents need them |
 | A TeX distribution, e.g. [MiKTeX](https://miktex.org/) | Various free licenses | Installed by the user; LaTeXDesk runs `pdflatex`, `bibtex`, `biber` |
 | [Ollama](https://ollama.com/) and its models | MIT (Ollama); per-model licenses | Optional local AI |
 | [Zotero](https://www.zotero.org/) and [Better BibTeX](https://retorque.re/zotero-better-bibtex/) | AGPL-3.0 / MIT | Optional reference library, used over its local API |

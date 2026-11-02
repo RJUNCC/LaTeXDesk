@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('texdesk', {
   deleteAppData: (root, rel) => ipcRenderer.invoke('file:delete-appdata', root, rel),
   writeFile: (root, rel, content) => ipcRenderer.invoke('file:write', root, rel, content),
   writeBinary: (root, rel, base64) => ipcRenderer.invoke('file:write-binary', root, rel, base64),
+  readBinary: (root, rel) => ipcRenderer.invoke('file:read-binary', root, rel),
+  exportWord: (base64, defaultName, savePath) => ipcRenderer.invoke('export:word', base64, defaultName, savePath),
+  openExported: file => ipcRenderer.invoke('export:open', file),
   importChoose: () => ipcRenderer.invoke('import:choose'),
   importCopyImage: (rel, root, destRel) => ipcRenderer.invoke('import:copy-image', rel, root, destRel),
   compile: (root, mainFile) => ipcRenderer.invoke('compile', root, mainFile),
@@ -19,6 +22,18 @@ contextBridge.exposeInMainWorld('texdesk', {
   setupStatus: () => ipcRenderer.invoke('setup:status'),
   appInfo: () => ipcRenderer.invoke('app:info'),
   learnFolder: name => ipcRenderer.invoke('learn:folder', name),
+  tex: {
+    status: () => ipcRenderer.invoke('tex:status'),
+    install: () => ipcRenderer.invoke('tex:install'),
+    onInstallProgress: cb => ipcRenderer.on('tex:install-progress', (_e, p) => cb(p)),
+  },
+  update: {
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    state: () => ipcRenderer.invoke('update:state'),
+    onState: cb => ipcRenderer.on('update:state', (_e, state) => cb(state)),
+  },
   ai: {
     config: () => ipcRenderer.invoke('ai:config'),
     setConfig: patch => ipcRenderer.invoke('ai:set-config', patch),

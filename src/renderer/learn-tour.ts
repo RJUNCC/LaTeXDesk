@@ -10,15 +10,17 @@ export const TOUR: TourStep[] = [
   { id: 'compile', selector: '#compile-btn', title: 'Compile to PDF', text: 'Recompile (Ctrl+Enter) turns your document into a PDF. Tick Auto to recompile a moment after you stop typing. Your work is saved automatically.' },
   { id: 'pdf', selector: '#pdf-pane', title: 'The PDF preview', text: 'Your document as it will look. Double-click anywhere in the PDF to jump to that spot in the source; Ctrl+Alt+J jumps the other way.', panel: 'pdf' },
   { id: 'logs', selector: '#logs-btn', title: 'Errors and warnings', text: 'If something goes wrong, the count appears here and the line is marked in the editor. Open Logs to see what happened; each error has an Explain & fix button that asks the AI.' },
+  { id: 'suggest', selector: '#suggest-btn', title: 'Comments and suggestions', text: 'Select text and click 💬 to leave a comment (Ctrl+Alt+M). Turn on Suggest and your edits show as suggestions someone can accept or reject, like Track Changes in Word.' },
+  { id: 'comments', selector: '[data-panel="comments"]', title: 'Comments tab', text: 'Every comment and suggestion in the file, in reading order: reply, resolve, accept or reject. They are saved with the project, so whoever you share the folder with sees them too.', panel: 'comments' },
   { id: 'ai', selector: '[data-panel="ai"]', title: 'AI tab', text: 'Ask questions about your document, review it, tighten a paragraph or summarise. Any change the AI suggests is shown first, for you to approve.', panel: 'ai' },
-  { id: 'review', selector: '[data-panel="review"]', title: 'Review tab', text: 'Analyze checks grammar, how the writing flows, whether claims match your sources, whether the argument holds together, and how balanced it is.', panel: 'review' },
+  { id: 'review', selector: '[data-panel="review"]', title: 'Review tab', text: 'Analyze checks grammar, how the writing flows, whether claims match your sources, whether the argument holds together, and how balanced it is. Accessibility checks the PDF works with screen readers.', panel: 'review' },
   { id: 'proof', selector: '[data-panel="proof"]', title: 'Proof tab', text: 'Build a proof step by step from a theorem, or check one you wrote. The algebra is checked exactly, and the AI checks whether each step follows.', panel: 'proof' },
   { id: 'tasks', selector: '[data-panel="tasks"]', title: 'Tasks', text: 'A to-do list for the document, including any % TODO comments you write. The AI can carry a task out for you, as a change you review.', panel: 'tasks' },
   { id: 'refs', selector: '[data-panel="references"]', title: 'References', text: 'Every source this document cites: missing ones, unused ones, and where each is cited.', panel: 'references' },
   { id: 'library', selector: '[data-panel="library"]', title: 'Your Zotero library', text: 'With Zotero open, search your library and cite in one click, or ask questions answered from your PDFs.', panel: 'library' },
   { id: 'research', selector: '[data-panel="research"]', title: 'Research', text: 'Turn a DOI, arXiv ID or web address into a citation, search for papers, or paste a screenshot of an equation to get its LaTeX.', panel: 'research' },
   { id: 'history', selector: '[data-panel="history"]', title: 'History', text: 'A snapshot is kept every time the document compiles. Compare versions side by side and restore one if you need to.', panel: 'history' },
-  { id: 'settings', selector: '#ai-settings-btn', title: 'Settings', text: 'Choose which AI model each feature uses: free local models through Ollama, or Claude with your own key. Ctrl+, also opens it.' },
+  { id: 'settings', selector: '#ai-settings-btn', title: 'Settings', text: 'Your name (for comments), the TeX engine, automatic updates, and which AI model each feature uses: free local models through Ollama, or Claude with your own key. Ctrl+, also opens it.' },
   { id: 'learn', selector: '#learn-btn', title: 'Learn and Help', text: 'Come back here any time for the lessons and these guides. The Help menu has Getting Started (what your computer still needs), Import Document, and Report a Bug.' },
 ]
 
@@ -45,16 +47,26 @@ export const TOPICS: Topic[] = [
     id: 'compiling',
     title: 'Compiling and the PDF',
     tour: ['compile', 'pdf', 'logs'],
-    html: `<p><b>Compiling</b> turns your LaTeX into a PDF. It uses MiKTeX (or another TeX installation) on your computer; Help → Getting Started checks it's there.</p>
-      <p>Click <b>Recompile</b> or press Ctrl+Enter, or tick <b>Auto</b>. The first compile of a new document can take a little longer while MiKTeX downloads any packages it needs.</p>
+    html: `<p><b>Compiling</b> turns your LaTeX into a PDF. It uses MiKTeX or TeX Live if you have one, or LaTeXDesk's own <b>built-in engine</b> (about 20 MB, set up with one click the first time you compile). Help → Getting Started shows which.</p>
+      <p>Click <b>Recompile</b> or press Ctrl+Enter, or tick <b>Auto</b>. The first compile of a new document can take a little longer while the packages it needs are downloaded.</p>
       <p>If there's an error, the line is marked in red and <b>Logs</b> explains it. Click <b>Explain &amp; fix</b> for a plain-language explanation and a suggested fix. Often the problem is a missing <code>}</code> or a special character that needs a backslash (<code>\\%</code>, <code>\\&amp;</code>, <code>\\_</code>).</p>`,
   },
   {
     id: 'import',
     title: 'Templates, importing and exporting',
-    html: `<p><b>Templates</b> (Ctrl+Shift+N) start a new document: article, report or thesis, slides, homework, lab report, letter or CV.</p>
+    html: `<p><b>Templates</b> (Ctrl+Shift+N) start a new document: article, report, slides, homework, lab report, letter or CV, papers for <b>IEEE, ACM, APA, Springer and Elsevier</b>, and a full <b>thesis</b> with chapters in their own files.</p>
       <p><b>Import Document</b> (File menu, Ctrl+Shift+I) turns a Word file into LaTeX, keeping headings, formatting, lists, tables, images, footnotes and equations. Google Docs works too: use File → Download → Microsoft Word first. LibreOffice (.odt), Markdown and HTML files can be imported the same way.</p>
+      <p><b>Export to Word</b> (File menu) makes a .docx for people who don't use LaTeX, with equations they can edit, and your comments and suggestions as Word comments and tracked changes.</p>
       <p><b>Export for Submission</b> (File menu) makes a single zip with only the files your document uses, ready for a journal or a teacher. It's test-compiled first.</p>`,
+  },
+  {
+    id: 'collaborate',
+    title: 'Comments, suggestions and sharing',
+    tour: ['suggest', 'comments'],
+    html: `<p><b>Comment</b> on any text: select it and click 💬 (or Ctrl+Alt+M). Others can reply, and resolve the comment when it's dealt with.</p>
+      <p><b>Suggest</b> changes instead of making them: turn on Suggest above the editor and edit as usual. Added text is highlighted and deleted text is struck through, with your name on it, until the author accepts or rejects it (in the Comments tab, or by hovering over it).</p>
+      <p>Comments and suggestions are saved in the project's hidden <code>.texdesk</code> folder. To work with someone, share the whole project folder (zip it, or keep it in OneDrive or Dropbox). Set your name in Settings so they know who wrote what.</p>
+      <p>Working with someone who uses Word? <b>File → Export to Word</b> includes them as Word comments and tracked changes.</p>`,
   },
   {
     id: 'ai',
@@ -77,7 +89,8 @@ export const TOPICS: Topic[] = [
       <li><b>Fact check:</b> each claim is compared with the papers it cites, your Zotero library and free web sources.</li>
       <li><b>Argument:</b> contradictions, circular reasoning, numbers that don't match, and conclusions that don't follow.</li>
       <li><b>Bias:</b> how balanced each section is.</li></ul>
-      <p>The first Analyze takes a minute or two; after that only changed paragraphs are re-checked.</p>`,
+      <p>The first Analyze takes a minute or two; after that only changed paragraphs are re-checked.</p>
+      <p><b>Accessibility</b> (no AI needed) checks the PDF works for everyone: pictures have descriptions for screen readers, the PDF has a title and language, text colours have enough contrast, headings don't skip levels, and link text says where it goes. Most problems have a one-click fix.</p>`,
   },
   {
     id: 'proof',

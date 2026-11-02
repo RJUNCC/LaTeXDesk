@@ -8,6 +8,9 @@ const research = require('./research')
 const { exportSubmission } = require('./export')
 const zotero = require('./zotero')
 const languagetool = require('./languagetool')
+const tex = require('./tex')
+const synctexReader = require('./synctex')
+const updater = require('./updater')
 const path = require('path')
 const fs = require('fs/promises')
 const { spawn } = require('child_process')
@@ -15,6 +18,8 @@ const { spawn } = require('child_process')
 const OUT_DIR = '.texdesk'
 // some TeX errors loop forever; Overleaf has a similar limit
 const COMPILE_TIMEOUT_MS = 3 * 60 * 1000
+// the built-in engine downloads packages on a document's first compile, which can take longer
+const TECTONIC_TIMEOUT_MS = 10 * 60 * 1000
 const TEXT_EXT = /\.(tex|bib|sty|cls|bst|txt|md)$/i
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json')
 
@@ -125,6 +130,9 @@ async function compile(root, mainFile) {
   await fs.mkdir(outDir, { recursive: true })
   const base = path.basename(mainFile, path.extname(mainFile))
   const cwd = path.dirname(mainPath)
+  const texStatus = await tex.status(app.getPath('userData'), (await loadSettings()).texEngine)
+  if (!texStatus.engine) return { ok: false, log: '', pdf: null, engine: null, cancelled: false, timedOut: false, missingTex: true, texStatus }
+  if (texStatus.engine === 'tectonic') return compileTectonic({ mainPath, outDir, base, cwd })
   const engine = detectEngine(await fs.readFile(mainPath, 'utf8'))
   const texArgs = [
     '-interaction=nonstopmode',
@@ -178,6 +186,27 @@ async function compile(root, mainFile) {
   return { ok: result.code === 0, log, pdf, pdfPath, engine, cancelled, timedOut, missingTex: !!result.missing }
 }
 
+/** The built-in engine: one run, which reruns TeX and runs BibTeX by itself. */
+async function compileTectonic({ mainPath, outDir, base, cwd }) {
+  const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: path.basename(mainPath), outDir })
+  cancelled = false
+  let timedOut = false
+  const timer = setTimeout(() => ((timedOut = true), cancelCompile()), TECTONIC_TIMEOUT_MS)
+  // a PDF left from an earlier compile mustn't look like this one's
+  await fs.rm(path.join(outDir, `${base}.pdf`), { force: true })
+  const result = await run(cmd, args, cwd, env)
+  clearTimeout(timer)
+  const log = await fs.readFile(path.join(outDir, `${base}.log`), 'utf8').catch(() => result.output)
+  const pdfPath = path.join(outDir, `${base}.pdf`)
+  const pdf = await fs.readFile(pdfPath).catch(() => null)
+  const hint = tex.tectonicHint(result.output + log)
+  // Tectonic's own messages (e.g. a package it couldn't download) go after the TeX log, where the raw view shows them
+  return { ok: result.code === 0, log: pdf ? log : `${log}
+
+${result.output}`, pdf, pdfPath, engine: 'tectonic', cancelled, timedOut, missingTex: !!result.missing, hint }
+}
+
+let synctexTool
 async function synctex(root, mainFile, args) {
   const outDir = path.join(root, OUT_DIR)
   const base = path.basename(mainFile, path.extname(mainFile))
@@ -189,6 +218,15 @@ async function synctex(root, mainFile, args) {
     cmdArgs = ['view', '-i', `${args.line}:${args.column || 0}:${file}`, '-o', pdf]
   } else {
     cmdArgs = ['edit', '-o', `${args.page}:${args.x}:${args.y}:${pdf}`]
+  }
+  synctexTool ??= tex.which('synctex')
+  // without the synctex tool (e.g. only the built-in engine), read the .synctex.gz file directly
+  if (!(await synctexTool)) {
+    const data = await synctexReader.load(outDir, base)
+    if (!data) return null
+    if (args.direction === 'forward') return synctexReader.forward(data, cwd, resolveInProject(root, args.file), args.line)
+    const hit = synctexReader.reverse(data, args.page, args.x, args.y)
+    return hit && { file: path.relative(root, path.resolve(cwd, hit.file)).split(path.sep).join('/'), line: hit.line }
   }
   const { output } = await run('synctex', cmdArgs, cwd)
   const field = name => {
@@ -219,6 +257,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') },
         { type: 'separator' },
+        { label: 'Export to Word (.docx)…', click: send('export-word') },
         { label: 'Export for Submission (zip)…', click: send('export') },
         { label: 'Show Project in Explorer', click: send('reveal') },
         { type: 'separator' },
@@ -233,6 +272,18 @@ function buildMenu() {
         { label: 'Set Current File as Main Document', click: send('set-main') },
         { label: 'Jump to Location in PDF', accelerator: 'CmdOrCtrl+Alt+J', click: send('sync-forward') },
         { label: 'Toggle Logs', accelerator: 'CmdOrCtrl+L', click: send('toggle-logs') },
+      ],
+    },
+    {
+      label: 'Review',
+      submenu: [
+        { label: 'Add Comment', accelerator: 'CmdOrCtrl+Alt+M', click: send('add-comment') },
+        { label: 'Suggest Changes (Track Changes)', click: send('toggle-suggest') },
+        { type: 'separator' },
+        { label: 'Accept All Suggestions in This File', click: send('accept-all') },
+        { label: 'Reject All Suggestions in This File', click: send('reject-all') },
+        { type: 'separator' },
+        { label: 'Show Comments', click: send('show-comments') },
       ],
     },
     {
@@ -262,6 +313,7 @@ function buildMenu() {
         { label: 'Suggest a Feature…', click: () => shell.openExternal(`${REPO}/issues/new?template=feature_request.yml&version=${pkg.version}`) },
         { label: 'Questions and Discussions…', click: () => shell.openExternal(`${REPO}/discussions`) },
         { type: 'separator' },
+        { label: 'Check for Updates…', click: send('check-updates') },
         { label: 'About LaTeXDesk', click: send('about') },
       ],
     },
@@ -387,8 +439,28 @@ ipcMain.handle('export:submission', async (_e, root, mainFile, zipPath) => {
     if (canceled || !filePath) return null
     zipPath = filePath
   }
-  return exportSubmission({ root, mainFile, outDir: path.join(root, OUT_DIR), zipPath })
+  return exportSubmission({ root, mainFile, outDir: path.join(root, OUT_DIR), zipPath, testCompile })
 })
+/** Compile an unzipped submission in its own folder with the engine in use; resolves to the log. */
+async function testCompile(dir, base) {
+  const texStatus = await tex.status(app.getPath('userData'), (await loadSettings()).texEngine)
+  // a stuck TeX run must not leave the export waiting forever
+  const timer = setTimeout(cancelCompile, texStatus.engine === 'tectonic' ? TECTONIC_TIMEOUT_MS : 2 * 60 * 1000)
+  try {
+    if (texStatus.engine === 'tectonic') {
+      const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: `${base}.tex`, outDir: dir })
+      const r = await run(cmd, args, dir, env)
+      return await fs.readFile(path.join(dir, `${base}.log`), 'utf8').catch(() => r.output)
+    }
+    const engine = detectEngine(await fs.readFile(path.join(dir, `${base}.tex`), 'utf8'))
+    const texArgs = ['-interaction=nonstopmode', '-file-line-error', `${base}.tex`]
+    await run(engine, texArgs, dir)
+    const second = await run(engine, texArgs, dir)
+    return await fs.readFile(path.join(dir, `${base}.log`), 'utf8').catch(() => second.output)
+  } finally {
+    clearTimeout(timer)
+  }
+}
 ipcMain.handle('ai:models', async (_e, provider) => ai_.listModels(await loadSettings(), provider))
 ipcMain.handle('ai:status', async () => ai_.ollamaStatus(await loadSettings()))
 ipcMain.handle('ai:pull', async (e, model) =>
@@ -433,6 +505,26 @@ ipcMain.handle('file:write-binary', async (_e, root, rel, base64) => {
   await fs.mkdir(path.dirname(full), { recursive: true })
   await fs.writeFile(full, Buffer.from(base64, 'base64'))
 })
+// pictures for Export to Word, sent as base64
+ipcMain.handle('file:read-binary', async (_e, root, rel) => (await fs.readFile(resolveInProject(root, rel))).toString('base64'))
+// Export to Word: the user picks where to save (savePath is only passed by tests)
+let lastExport = null
+ipcMain.handle('export:word', async (_e, base64, defaultName, savePath) => {
+  if (!savePath) {
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export to Word',
+      defaultPath: path.join(projectRoot ?? app.getPath('documents'), defaultName),
+      filters: [{ name: 'Word document', extensions: ['docx'] }],
+    })
+    if (canceled || !filePath) return null
+    savePath = filePath
+  }
+  await fs.writeFile(savePath, Buffer.from(base64, 'base64'))
+  lastExport = savePath
+  return savePath
+})
+// "Open in Word" after exporting: only the file just exported
+ipcMain.handle('export:open', (_e, file) => (file === lastExport ? shell.openPath(file) : null))
 // File → Import Document: the user picks a Word / LibreOffice / Markdown / HTML file anywhere on disk
 ipcMain.handle('import:choose', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -467,33 +559,33 @@ ipcMain.handle('file:write', async (_e, root, rel, content) => {
 })
 
 // Getting Started: what this computer has (TeX, Java/LanguageTool, Ollama, Zotero)
-function which(cmd) {
-  return new Promise(resolve => {
-    const child = spawn('where', [cmd], { windowsHide: true })
-    let out = ''
-    child.stdout.on('data', d => (out += d))
-    child.on('error', () => resolve(null))
-    child.on('close', code => resolve(code === 0 ? out.split(/\r?\n/)[0].trim() : null))
-  })
-}
 ipcMain.handle('setup:status', async () => {
   const settings = await loadSettings()
-  const [tex, lt, ollama, zot] = await Promise.all([
-    which('pdflatex'),
+  const [texStatus, lt, ollama, zot] = await Promise.all([
+    tex.status(app.getPath('userData'), settings.texEngine),
     languagetool.status(app.getPath('userData')).catch(() => ({})),
     ai_.ollamaStatus(settings).catch(() => ({ running: false })),
     zotero.status().catch(() => ({ running: false })),
   ])
   const models = ollama.running ? (await ai_.listModels(settings, 'ollama').catch(() => [])).map(m => m.id) : []
   return {
-    tex: { found: !!tex, path: tex },
+    tex: { found: !!texStatus.engine, path: texStatus.system, engine: texStatus.engine, builtIn: texStatus.tectonic, downloadBytes: texStatus.downloadBytes },
     java: !!lt.java,
     languagetool: { installed: !!lt.installed, running: !!lt.running },
     ollama: { running: !!ollama.running, models },
     zotero: { running: !!zot.running, betterBibtex: !!zot.betterBibtex },
   }
 })
-ipcMain.handle('app:info', () => ({ name: pkg.productName, version: pkg.version }))
+ipcMain.handle('app:info', () => ({ name: pkg.productName, version: pkg.version, user: require('os').userInfo().username }))
+// the TeX engine: what's installed, and setting up the built-in one
+ipcMain.handle('tex:status', async () => tex.status(app.getPath('userData'), (await loadSettings()).texEngine))
+ipcMain.handle('tex:install', e => tex.installTectonic(app.getPath('userData'), p => e.sender.send('tex:install-progress', p)))
+// updates from GitHub Releases
+updater.init(state => win?.webContents.send('update:state', state))
+ipcMain.handle('update:check', () => updater.check())
+ipcMain.handle('update:download', () => updater.download())
+ipcMain.handle('update:install', () => updater.install())
+ipcMain.handle('update:state', () => updater.state())
 // Learn: a private folder for lesson practice files, and one for the tour's sample project
 ipcMain.handle('learn:folder', async (_e, name) => {
   if (!['practice', 'tour'].includes(name)) throw new Error('unknown learn folder')
@@ -511,6 +603,12 @@ app.whenReady().then(() => {
   protocol.handle('ldfile', serveProjectFile)
   buildMenu()
   createWindow()
+  // a quiet check shortly after starting, then twice a day; the page asks before anything is downloaded
+  const autoCheck = async () => {
+    if ((await loadSettings()).autoUpdate !== false && updater.supported()) await updater.check()
+  }
+  setTimeout(autoCheck, 8000)
+  setInterval(autoCheck, 12 * 60 * 60 * 1000).unref?.()
 })
 
 app.on('window-all-closed', () => app.quit())

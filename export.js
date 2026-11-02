@@ -3,7 +3,6 @@
 const path = require('path')
 const os = require('os')
 const fs = require('fs/promises')
-const { spawn } = require('child_process')
 const { zipSync, unzipSync, strToU8 } = require('fflate')
 
 const VERBATIM = /\\begin\{(verbatim\*?|Verbatim\*?|lstlisting|minted|comment|filecontents\*?)\}/
@@ -99,23 +98,12 @@ async function dependencies(tex, baseDir) {
   return { files: found, warnings }
 }
 
-function run(cmd, args, cwd) {
-  return new Promise(resolve => {
-    const child = spawn(cmd, args, { cwd, windowsHide: true })
-    let output = ''
-    child.stdout.on('data', d => (output += d))
-    child.stderr.on('data', d => (output += d))
-    const timer = setTimeout(() => child.kill(), 120000)
-    child.on('error', e => (clearTimeout(timer), resolve({ code: -1, output: String(e) })))
-    child.on('close', code => (clearTimeout(timer), resolve({ code, output })))
-  })
-}
-
 /**
- * Build the submission zip at `zipPath`. `outDir` holds the last compile (for the .bbl).
+ * Build the submission zip at `zipPath`. `outDir` holds the last compile (for the .bbl). `testCompile(dir, base)`
+ * compiles the unzipped copy with the engine in use and resolves to its log.
  * Resolves to a report: files included, warnings, and whether the zip compiled on its own.
  */
-async function exportSubmission({ root, mainFile, outDir, zipPath }) {
+async function exportSubmission({ root, mainFile, outDir, zipPath, testCompile }) {
   const mainPath = path.resolve(root, mainFile)
   const baseDir = path.dirname(mainPath)
   const base = path.basename(mainFile, path.extname(mainFile))
@@ -137,7 +125,7 @@ async function exportSubmission({ root, mainFile, outDir, zipPath }) {
   const zip = zipSync(entries, { level: 9 })
   await fs.writeFile(zipPath, zip)
 
-  // prove it builds on its own: unzip into a clean temp folder and compile twice
+  // prove it builds on its own: unzip into a clean temp folder and compile it
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'texdesk-export-'))
   let compiled = false
   let errors = []
@@ -146,11 +134,7 @@ async function exportSubmission({ root, mainFile, outDir, zipPath }) {
       await fs.mkdir(path.dirname(path.join(tmp, name)), { recursive: true })
       await fs.writeFile(path.join(tmp, name), data)
     }
-    const engine = tex.match(/^%\s*!TEX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)/im)?.[1] ?? 'pdflatex'
-    const args = ['-interaction=nonstopmode', '-file-line-error', `${base}.tex`]
-    await run(engine, args, tmp)
-    const second = await run(engine, args, tmp)
-    const log = await fs.readFile(path.join(tmp, `${base}.log`), 'utf8').catch(() => second.output)
+    const log = await testCompile(tmp, base)
     errors = [...log.matchAll(/^(?:.*?\.tex:\d+: |! )(.+)$/gm)].map(m => m[1]).slice(0, 10)
     compiled = (await exists(path.join(tmp, `${base}.pdf`))) && errors.length === 0
   } finally {

@@ -3,9 +3,10 @@
 import { ai } from './ai-client'
 import { RECOMMENDED } from './ai-settings'
 import { lt } from './grammar'
+import { installBuiltInTex } from './tex-setup'
 
 type SetupStatus = {
-  tex: { found: boolean; path: string | null }
+  tex: { found: boolean; path: string | null; engine: 'system' | 'tectonic' | null; builtIn: boolean; downloadBytes: number }
   java: boolean
   languagetool: { installed: boolean; running: boolean }
   ollama: { running: boolean; models: string[] }
@@ -96,9 +97,13 @@ async function renderChecks() {
       ok: s.tex.found,
       optional: false,
       title: 'TeX (needed to make PDFs)',
-      detail: s.tex.found
-        ? `Found ${esc(s.tex.path ?? '')}`
-        : 'Install <a href="https://miktex.org/download" target="_blank">MiKTeX</a> (free), choosing “install missing packages on the fly: Yes”. Then restart LaTeXDesk.',
+      detail:
+        s.tex.engine === 'tectonic'
+          ? 'Using the built-in TeX engine. A package is downloaded the first time a document uses it.'
+          : s.tex.found
+            ? `Found ${esc(s.tex.path ?? '')}`
+            : `Set up the built-in engine (about ${Math.round(s.tex.downloadBytes / 1e6)} MB, downloaded once), or install <a href="https://miktex.org/download" target="_blank">MiKTeX</a> (free, a full distribution) and restart LaTeXDesk.`,
+      action: s.tex.found ? undefined : { label: 'Set up built-in TeX', run: () => installBuiltInTex() },
     },
     {
       ok: s.java && s.languagetool.installed,
