@@ -2,6 +2,8 @@
 // Anything that changes files comes back as find/replace edits and goes through the diff review.
 import type { LatexLogEntry } from '../overleaf/latex-log-parser'
 import { AiRequest, extractJson, featureReady, runAi } from './ai-client'
+import type { BibEntry } from './bib-project'
+import { plain, unsafeFields } from './bib-sources'
 import { FindReplace, editsToChanges, reviewChanges } from './diff-review'
 import type { AppHost } from './host'
 import { panelEl, setBadge, showPanel } from './panels'
@@ -209,14 +211,24 @@ function showEdits(out: HTMLElement, summary: string, edits: Edit[]) {
     diff.append(del, ins)
     const one = document.createElement('button')
     one.textContent = 'Review'
-    one.onclick = () => applyEdits([e], 'Review suggestion')
+    one.onclick = async () => {
+      if (await applyEdits([e], 'Review suggestion')) done(one)
+    }
     li.append(why, diff, one)
     list.appendChild(li)
   }
   const all = document.createElement('button')
   all.className = 'primary'
   all.textContent = `Review all ${clean.length} change${clean.length > 1 ? 's' : ''}`
-  all.onclick = () => applyEdits(clean, 'Review AI suggestions')
+  // an applied change can't be applied again: its button says so instead
+  const done = (...buttons: HTMLButtonElement[]) =>
+    buttons.forEach(b => {
+      b.disabled = true
+      b.textContent = '✓ Applied'
+    })
+  all.onclick = async () => {
+    if (await applyEdits(clean, 'Review AI suggestions')) done(all, ...list.querySelectorAll('button'))
+  }
   out.append(list, all)
   setBadge('ai', clean.length)
 }
@@ -303,6 +315,33 @@ async function checkSection() {
     out,
     issues.length ? `${issues.length} issue${issues.length > 1 ? 's' : ''} found (underlined in the editor).` : 'No issues found in this section.',
     issues.map(i => ({ file: path, find: i.find, replace: i.replace, why: i.message }))
+  )
+}
+
+/**
+ * "Explain & fix" for an error in the reference list. The .bbl is rebuilt from the .bib on every compile, so the
+ * fix goes in the source's entry. Characters LaTeX reads as commands (^ & % # _) are escaped without asking the AI.
+ */
+export async function explainSourceError(entry: LatexLogEntry, src: BibEntry) {
+  const name = `your source “${plain(src.fields.title) || src.key}” (${src.key}) in ${src.file}`
+  const unsafe = unsafeFields(src.fields)
+  if (unsafe.length) {
+    showPanel('ai')
+    bubble('user', `Explain & fix: ${entry.message}`)
+    const shown = unsafe.map(f => f.name).join(' and ')
+    showEdits(
+      bubble('assistant'),
+      `This error comes from ${name}. Its ${shown} has characters that LaTeX reads as commands (such as ^, &, %, # or _), so the reference list breaks where it reaches them. The fix escapes them so they print as they are.`,
+      unsafe.map(f => ({ file: src.file, find: `{${f.value}}`, replace: `{${f.fixed}}`, why: `Escape the special characters in the ${f.name}` }))
+    )
+    return
+  }
+  return editRequest(
+    `Explain & fix: ${entry.message}`,
+    `LaTeX reported this ${entry.level} in the reference list, which it builds from ${name}:\n${entry.message}\n${entry.content ?? ''}\n\n` +
+      'Explain in plain language what is wrong with this source (put it in "summary"), then give the smallest edits to the entry that fix it. ' +
+      `Use "file": "${src.file}".`,
+    `The entry in ${src.file}:\n\`\`\`bibtex\n${src.raw}\n\`\`\``
   )
 }
 

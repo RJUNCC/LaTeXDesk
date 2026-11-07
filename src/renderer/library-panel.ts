@@ -4,8 +4,10 @@
 import { featureReady, runAi } from './ai-client'
 import type { AppHost } from './host'
 import { panelEl, whenShown } from './panels'
-import { bibEntries } from './bib-project'
-import { Passage, ZFolder, ZItem, ZStorage, authorLine, citeFromZotero, ensureInBib, insertCite, libraryItems, onLibraryChange, refreshLibrary, zotero, zoteroStatus } from './zotero-client'
+import { BibEntry, bibEntries } from './bib-project'
+import { plain } from './bib-sources'
+import { openPaper } from './paper-reader'
+import { Passage, ZFolder, ZItem, ZStorage, authorLine, citeCommandFor, citeFromZotero, ensureInBib, insertCite, libraryItems, mayHavePdf, onLibraryChange, refreshLibrary, saveToZotero, zotero, zoteroItemFor, zoteroStatus } from './zotero-client'
 
 let host: AppHost
 let asking: { cancel: () => void } | null = null
@@ -55,7 +57,7 @@ export function initLibrary(h: AppHost) {
     if (ev.key === 'Enter' && !ev.shiftKey) (ev.preventDefault(), void ask())
   }
   zotero.onIndexProgress(p => ($('.lib-index').textContent = `Indexing your library… ${p.done} papers (${p.title.slice(0, 50)})`))
-  onLibraryChange(() => (renderFolders(), renderResults()))
+  onLibraryChange(() => (matchProject(), renderFolders(), renderResults()))
   whenShown('library', () => void show())
 }
 
@@ -83,6 +85,10 @@ let view = 'all'
 let folderItems: Set<string> | null = null
 /** citation keys in the project's .bib files */
 let projectKeys = new Set<string>()
+let projectEntries: BibEntry[] = []
+/** Zotero item key → the key the project cites that paper by (Zotero's own key can differ: see zoteroItemFor) */
+let projectByItem = new Map<string, string>()
+const inProject = (i: ZItem) => projectByItem.has(i.itemKey)
 const selected = new Set<string>()
 
 type ViewSettings = { libraryViews?: Record<string, string> }
@@ -96,9 +102,23 @@ function withSubfolders(key: string): string[] {
 }
 
 async function refreshProject() {
-  projectKeys = new Set((await bibEntries(host).catch(() => new Map())).keys())
+  const entries: Map<string, BibEntry> = await bibEntries(host).catch(() => new Map())
+  projectKeys = new Set(entries.keys())
+  projectEntries = [...entries.values()]
+  matchProject()
   if (panelEl('library').offsetParent) renderResults()
 }
+
+function matchProject() {
+  projectByItem = new Map()
+  for (const e of projectEntries) {
+    const z = zoteroItemFor(e.key, e.fields)
+    if (z) projectByItem.set(z.itemKey, e.key)
+  }
+}
+
+/** The key to cite a Zotero paper by: the project's own key when the project already has it. */
+const keyFor = (i: ZItem) => projectByItem.get(i.itemKey) ?? i.citekey
 
 /** A project opens on the view last used with it, else on its own papers if it has any. */
 async function projectOpened() {
@@ -135,8 +155,7 @@ async function choose(v: string, remember = true) {
 
 function renderFolders() {
   const select = $<HTMLSelectElement>('.lib-folder')
-  const inProject = libraryItems().filter(i => projectKeys.has(i.citekey)).length
-  const options: HTMLOptionElement[] = [new Option(`All papers (${libraryItems().length})`, 'all'), new Option(`This project (${inProject})`, 'project')]
+  const options: HTMLOptionElement[] = [new Option(`All papers (${libraryItems().length})`, 'all'), new Option(`This project (${projectEntries.length})`, 'project')]
   // folders as a tree, indented under their parents
   const add = (parent: string | null, depth: number) => {
     for (const f of folders.filter(f => f.parent === parent).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -158,10 +177,13 @@ function matches(i: ZItem, q: string) {
 
 /** Cite the ticked papers together (one \cite{a,b}), or only add them to the project's .bib. */
 async function citeSelected(cite: boolean) {
-  const keys = [...selected]
+  const keys = [...selected].map(k => {
+    const i = libraryItems().find(i => i.citekey === k)
+    return i ? keyFor(i) : k
+  })
   if (!keys.length) return
-  if (cite) insertCite(host, keys.join(','))
-  const added = await ensureInBib(host, keys)
+  if (cite) insertCite(host, keys.join(','), await citeCommandFor(host))
+  const added = await ensureInBib(host, keys.filter(k => !projectKeys.has(k)))
   host.setStatus(
     cite
       ? `Cited ${keys.length} paper${keys.length === 1 ? '' : 's'}${added.length ? `, ${added.length} added to the bibliography` : ''}`
@@ -193,17 +215,20 @@ function renderResults() {
   const q = $<HTMLInputElement>('.lib-search').value
   const list = $('.lib-results')
   renderBulk()
-  if (!libraryItems().length) return list.replaceChildren(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'Your Zotero library will appear here.' }))
+  if (!libraryItems().length && view !== 'project') return list.replaceChildren(Object.assign(document.createElement('div'), { className: 'muted', textContent: 'Your Zotero library will appear here.' }))
   const folder = currentFolder()
-  const pool = view === 'project' ? libraryItems().filter(i => projectKeys.has(i.citekey)) : folder ? libraryItems().filter(i => folderItems?.has(i.itemKey)) : libraryItems()
+  const pool = view === 'project' ? libraryItems().filter(inProject) : folder ? libraryItems().filter(i => folderItems?.has(i.itemKey)) : libraryItems()
   const found = q.trim() ? pool.filter(i => matches(i, q)) : pool
   const where = view === 'project' ? 'in this project' : folder ? `in ${folder.name}` : 'in your library'
   let count = q.trim() ? `${found.length} match${found.length === 1 ? '' : 'es'} ${where}` : `${pool.length} paper${pool.length === 1 ? '' : 's'} ${where}`
-  if (view === 'project') {
-    const notInZotero = [...projectKeys].filter(k => !libraryItems().some(i => i.citekey === k)).length
-    if (notInZotero) count += ` · ${notInZotero} more in the .bib aren’t in Zotero (see the Refs tab)`
-  }
+  // the project's own sources that aren't in Zotero, so This project lists all of its papers
+  const outside = view === 'project' ? projectEntries.filter(e => !zoteroItemFor(e.key, e.fields)) : []
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  const outsideFound = outside.filter(e => words.every(w => `${e.key} ${plain(e.fields.title)} ${plain(e.fields.author)} ${e.fields.year ?? ''}`.toLowerCase().includes(w)))
+  if (view === 'project')
+    count = `${q.trim() ? `${found.length + outsideFound.length} matches` : `${pool.length + outside.length} papers`} in this project${outside.length ? ` · ${outside.length} not in Zotero yet` : ''}`
   const rows: HTMLElement[] = found.slice(0, 100).map(item)
+  if (outsideFound.length) rows.push(Object.assign(document.createElement('h5'), { className: 'lib-outside-head', textContent: 'Not in your Zotero library yet' }), ...outsideFound.map(projectSource))
   // nothing here: offer the same search over the whole library
   if (q.trim() && !found.length && view !== 'all') {
     const elsewhere = libraryItems().filter(i => matches(i, q)).length
@@ -212,7 +237,7 @@ function renderResults() {
       rows.push(all)
     }
   }
-  if (!pool.length) {
+  if (!pool.length && !outside.length) {
     const empty = view === 'project' ? 'No papers from Zotero in this project yet. Cite one, or tick some and click Add to project.' : folder ? 'This folder is empty.' : ''
     if (empty) rows.push(Object.assign(document.createElement('div'), { className: 'muted lib-empty', textContent: empty }))
   }
@@ -239,17 +264,61 @@ function item(i: ZItem) {
   const body = document.createElement('div')
   body.className = 'lib-item-body'
   const title = Object.assign(document.createElement('div'), { className: 'rs-title', textContent: i.title })
-  if (view !== 'project' && projectKeys.has(i.citekey)) title.append(Object.assign(document.createElement('span'), { className: 'lib-in-project', textContent: 'in project' }))
+  if (view !== 'project' && inProject(i)) title.append(Object.assign(document.createElement('span'), { className: 'lib-in-project', textContent: 'in project' }))
   const meta = Object.assign(document.createElement('div'), { className: 'muted rs-meta', textContent: `${authorLine(i)} · ` })
   meta.append(Object.assign(document.createElement('code'), { textContent: i.citekey }))
   const acts = document.createElement('div')
   acts.className = 'rs-row'
   acts.append(
-    button('Cite', () => void citeFromZotero(host, i.citekey).then(() => refreshProject().then(renderFolders)), 'primary'),
+    button('Cite', () => void cite(i), 'primary'),
+    button('📄 Read', () => void openPaper({ key: keyFor(i), title: i.title, fields: { doi: i.doi ?? '', url: i.url ?? '' }, zoteroItemKey: i.itemKey })),
     button('Show in Zotero', () => window.open(`zotero://select/library/items/${i.itemKey}`))
   )
   body.append(title, meta, acts)
   div.append(tick, body)
+  return div
+}
+
+/** Cite a library paper: by the project's key when the project already has it under another one. */
+async function cite(i: ZItem) {
+  const key = keyFor(i)
+  if (projectKeys.has(key)) {
+    insertCite(host, key, await citeCommandFor(host))
+    host.setStatus(`Cited ${key}`, 'ok')
+  } else await citeFromZotero(host, key)
+  await refreshProject()
+  renderFolders()
+}
+
+/** One of the project's sources that isn't in Zotero: cite it, save it there, or read it. */
+function projectSource(e: BibEntry) {
+  const div = document.createElement('div')
+  div.className = 'rs-paper lib-item lib-outside'
+  const body = document.createElement('div')
+  body.className = 'lib-item-body'
+  const authors = plain(e.fields.author)
+    .split(/\s+and\s+/)
+    .filter(Boolean)
+    .map(a => (a.includes(',') ? a.split(',')[0] : a.split(' ').pop()!))
+  const meta = Object.assign(document.createElement('div'), { className: 'muted rs-meta', textContent: `${authorLine({ authors, year: Number(e.fields.year?.match(/\d{4}/)?.[0]) || null })} · ` })
+  meta.append(Object.assign(document.createElement('code'), { textContent: e.key }))
+  const acts = document.createElement('div')
+  acts.className = 'rs-row'
+  const save = button('Save to Zotero', async () => {
+    save.disabled = true
+    save.textContent = 'Saving…'
+    try {
+      host.setStatus(await saveToZotero(e), 'ok')
+    } catch (err) {
+      save.disabled = false
+      save.textContent = 'Save to Zotero'
+      host.setStatus(`Couldn't save to Zotero: ${(err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'error')
+    }
+  })
+  acts.append(button('Cite', async () => (insertCite(host, e.key, await citeCommandFor(host)), host.setStatus(`Cited ${e.key}`, 'ok')), 'primary'), save)
+  if (mayHavePdf(e.fields)) acts.append(button('📄 Read', () => void openPaper({ key: e.key, title: plain(e.fields.title) || e.key, fields: e.fields })))
+  body.append(Object.assign(document.createElement('div'), { className: 'rs-title', textContent: plain(e.fields.title) || e.key }), meta, acts)
+  div.append(body)
   return div
 }
 

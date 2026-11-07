@@ -46,6 +46,13 @@ function migrateFromTeXDesk() {
 }
 migrateFromTeXDesk()
 
+// Linux: Electron only finds the keyring by itself on GNOME and KDE. Elsewhere (Hyprland, Sway, i3…) ask for
+// the Secret Service, which gnome-keyring and KeePassXC provide; without one it falls back to no real protection
+// and Settings refuses to save API keys.
+const DESKTOP = (process.env.XDG_CURRENT_DESKTOP ?? '').toLowerCase()
+if (process.platform === 'linux' && !app.commandLine.hasSwitch('password-store') && !/gnome|kde|unity|xfce|cinnamon|deepin|ukui/.test(DESKTOP))
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret')
+
 let win
 
 async function loadSettings() {
@@ -99,7 +106,8 @@ let cancelled = false
 
 function run(cmd, args, cwd, env) {
   return new Promise(resolve => {
-    const child = spawn(cmd, args, { cwd, env, windowsHide: true })
+    // its own process group on Linux, so stopping it stops what TeX started too
+    const child = spawn(cmd, args, { cwd, env, windowsHide: true, detached: process.platform !== 'win32' })
     running.add(child)
     let output = ''
     child.stdout.on('data', d => (output += d))
@@ -113,8 +121,13 @@ function run(cmd, args, cwd, env) {
 function cancelCompile() {
   cancelled = true
   for (const child of running) {
-    // /T also stops anything TeX started (e.g. MiKTeX's package installer)
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+    // /T (or the process group) also stops anything TeX started (e.g. MiKTeX's package installer)
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+    else {
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {}
+    }
   }
 }
 
@@ -132,7 +145,7 @@ async function compile(root, mainFile) {
   const cwd = path.dirname(mainPath)
   const texStatus = await tex.status(app.getPath('userData'), (await loadSettings()).texEngine)
   if (!texStatus.engine) return { ok: false, log: '', pdf: null, engine: null, cancelled: false, timedOut: false, missingTex: true, texStatus }
-  if (texStatus.engine === 'tectonic') return compileTectonic({ mainPath, outDir, base, cwd })
+  if (texStatus.engine === 'tectonic') return compileTectonic({ mainPath, outDir, base, cwd, program: texStatus.tectonicPath })
   const engine = detectEngine(await fs.readFile(mainPath, 'utf8'))
   const texArgs = [
     '-interaction=nonstopmode',
@@ -187,8 +200,8 @@ async function compile(root, mainFile) {
 }
 
 /** The built-in engine: one run, which reruns TeX and runs BibTeX by itself. */
-async function compileTectonic({ mainPath, outDir, base, cwd }) {
-  const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: path.basename(mainPath), outDir })
+async function compileTectonic({ mainPath, outDir, base, cwd, program }) {
+  const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: path.basename(mainPath), outDir, program })
   cancelled = false
   let timedOut = false
   const timer = setTimeout(() => ((timedOut = true), cancelCompile()), TECTONIC_TIMEOUT_MS)
@@ -251,6 +264,7 @@ function buildMenu() {
       submenu: [
         { label: 'Open Project Folder…', accelerator: 'CmdOrCtrl+O', click: send('open-folder') },
         { label: 'New File…', accelerator: 'CmdOrCtrl+N', click: send('new-file') },
+        { label: 'Add Existing File…', click: send('add-files') },
         { label: 'New from Template…', accelerator: 'CmdOrCtrl+Shift+N', click: send('templates') },
         { label: 'Import Document (Word, Google Docs, Markdown)…', accelerator: 'CmdOrCtrl+Shift+I', click: send('import') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
@@ -259,7 +273,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Export to Word (.docx)…', click: send('export-word') },
         { label: 'Export for Submission (zip)…', click: send('export') },
-        { label: 'Show Project in Explorer', click: send('reveal') },
+        { label: process.platform === 'win32' ? 'Show Project in Explorer' : 'Show Project Folder', click: send('reveal') },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -401,12 +415,87 @@ ipcMain.handle('ai:run', async (e, id, req) => {
 ipcMain.handle('ai:cancel', (_e, id) => ai_.cancel(id))
 ipcMain.handle('research:cite', (_e, input) => research.cite(input))
 ipcMain.handle('research:search', (_e, query) => research.search(query))
+ipcMain.handle('research:match', (_e, text) => research.match(text))
+// Read a paper in the app: the PDF attached to it in Zotero first, else a free copy online (cached in userData/papers)
+ipcMain.handle('paper:pdf', async (_e, fields, zoteroItemKey) => {
+  if (zoteroItemKey) {
+    const bytes = await zotero.itemPdf({ userData: app.getPath('userData'), itemKey: zoteroItemKey }).catch(() => null)
+    if (bytes) return { bytes, from: 'your Zotero library' }
+  }
+  try {
+    const { bytes, from } = await research.paperPdf(fields ?? {}, papersDir())
+    return { bytes, from }
+  } catch (e) {
+    return { error: e.message, page: e.page } // page: where it's free to read, when the site won't hand the PDF to apps
+  }
+})
+const papersDir = () => path.join(app.getPath('userData'), 'papers')
+// A PDF of your own for a source (from your browser's downloads, your school library…), kept for Read from now on
+ipcMain.handle('paper:choose-pdf', async (_e, fields) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: 'Choose the paper’s PDF', properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }] })
+  if (canceled || !filePaths.length) return null
+  return research.addPdf(fields ?? {}, papersDir(), await fs.readFile(filePaths[0]))
+})
+// The paper's page in a window of its own: you download the PDF there yourself, and it opens in the Paper tab.
+// Sites like SSRN only give PDFs to people, not apps. The window shares no cookies or storage with the app.
+let pageWindow = null
+ipcMain.handle('paper:from-page', async (_e, fields, page) => {
+  if (!/^https?:\/\//i.test(page ?? '')) throw new Error('Not a web page')
+  pageWindow?.close()
+  const w = (pageWindow = new BrowserWindow({
+    parent: win,
+    width: 1000,
+    height: 800,
+    title: 'Download the PDF here — it will open in LaTeXDesk',
+    autoHideMenuBar: true,
+    webPreferences: { partition: 'persist:paper-pages', sandbox: true, contextIsolation: true, nodeIntegration: false },
+  }))
+  w.on('page-title-updated', ev => ev.preventDefault())
+  // links that open a new tab open here instead; only web pages
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) w.loadURL(url)
+    return { action: 'deny' }
+  })
+  w.webContents.on('will-navigate', (ev, url) => /^https?:\/\//i.test(url) || ev.preventDefault())
+  const ses = w.webContents.session
+  return new Promise(resolve => {
+    let finished = false
+    const finish = result => {
+      if (finished) return
+      finished = true
+      ses.removeListener('will-download', onDownload)
+      if (!w.isDestroyed()) w.close()
+      resolve(result)
+    }
+    const onDownload = (_ev, item, wc) => {
+      if (wc !== w.webContents) return
+      if (!/pdf/i.test(item.getMimeType()) && !/\.pdf$/i.test(item.getFilename())) return item.cancel() // only the paper
+      const tmp = path.join(require('os').tmpdir(), `latexdesk-paper-${process.pid}-${Date.now()}.pdf`)
+      item.setSavePath(tmp)
+      item.once('done', async (_e2, state) => {
+        const bytes = state === 'completed' ? await fs.readFile(tmp).catch(() => null) : null
+        fs.rm(tmp, { force: true }).catch(() => {})
+        if (!bytes) return
+        try {
+          finish(await research.addPdf(fields ?? {}, papersDir(), bytes))
+        } catch {} // not really a PDF: the window stays open to try again
+      })
+    }
+    ses.on('will-download', onDownload)
+    w.on('closed', () => {
+      if (pageWindow === w) pageWindow = null
+      finish(null) // closed without downloading
+    })
+    w.loadURL(page).catch(() => {})
+  })
+})
 // ---------- Zotero (all on localhost) ----------
 const ollamaUrl = async () => ai_.aiSettings(await loadSettings()).providers.ollama.url
 ipcMain.handle('zotero:status', () => zotero.status())
 ipcMain.handle('zotero:search', (_e, query) => zotero.search(query))
 ipcMain.handle('zotero:export', (_e, keys) => zotero.exportBib(keys))
 ipcMain.handle('zotero:save', (_e, payload) => zotero.save(payload))
+ipcMain.handle('zotero:save-target', () => zotero.saveTarget())
 ipcMain.handle('zotero:index', async e =>
   zotero.updateIndex({ userData: app.getPath('userData'), ollamaUrl: await ollamaUrl(), onProgress: p => e.sender.send('zotero:index-progress', p) })
 )
@@ -453,7 +542,7 @@ async function testCompile(dir, base) {
   const timer = setTimeout(cancelCompile, texStatus.engine === 'tectonic' ? TECTONIC_TIMEOUT_MS : 2 * 60 * 1000)
   try {
     if (texStatus.engine === 'tectonic') {
-      const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: `${base}.tex`, outDir: dir })
+      const { cmd, args, env } = tex.tectonicCommand(app.getPath('userData'), { mainName: `${base}.tex`, outDir: dir, program: texStatus.tectonicPath })
       const r = await run(cmd, args, dir, env)
       return await fs.readFile(path.join(dir, `${base}.log`), 'utf8').catch(() => r.output)
     }
@@ -494,6 +583,76 @@ function serveProjectFile(request) {
   }
 }
 ipcMain.handle('project:reveal', (_e, root) => shell.openPath(root))
+
+const SOURCE_FILES = /\.(bib|ris|txt)$/i
+const readSourceFiles = files => Promise.all(files.map(async f => ({ name: path.basename(f), text: await fs.readFile(f, 'utf8') })))
+
+// File → Add Existing File: copy files the user picks into the project (never over an existing file). Reference
+// files (.bib, .ris) come back as text instead, so their sources join the project's bibliography.
+ipcMain.handle('project:add-files', async (_e, root) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: 'Add files to the project', properties: ['openFile', 'multiSelections'] })
+  if (canceled || !filePaths.length) return { added: [], sources: [] }
+  const sources = await readSourceFiles(filePaths.filter(f => /\.(bib|ris)$/i.test(f)))
+  const added = []
+  for (const src of filePaths.filter(f => !/\.(bib|ris)$/i.test(f))) {
+    const ext = path.extname(src)
+    const stem = path.basename(src, ext)
+    let name = path.basename(src)
+    for (let i = 2; await fs.access(resolveInProject(root, name)).then(() => true, () => false); i++) name = `${stem} (${i})${ext}`
+    await fs.copyFile(src, resolveInProject(root, name))
+    added.push(name)
+  }
+  return { added, sources }
+})
+// Toolbar → Figure: pick a picture with the system file dialog. One inside the project is used where it is; one from
+// elsewhere is copied next to the main document (reusing an identical copy, never overwriting a different file).
+// Returns the path for \includegraphics, relative to the main document's folder, or null when cancelled.
+const IMAGE_FILES = /\.(png|jpe?g|pdf|eps)$/i
+const UNSAFE_IN_TEX = /[#%{}$&~^\\]/
+ipcMain.handle('project:choose-image', async (_e, root, mainDir) => {
+  const docDir = resolveInProject(root, mainDir || '.')
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Choose a picture',
+    defaultPath: docDir,
+    properties: ['openFile'],
+    filters: [
+      { name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'pdf', 'eps'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  if (canceled || !filePaths.length) return null
+  const src = path.resolve(filePaths[0])
+  if (!IMAGE_FILES.test(src)) throw new Error('LaTeX can show PNG, JPG, PDF and EPS pictures. Save the picture as one of those first.')
+  const projectDir = path.resolve(root)
+  const inProject = src.startsWith(projectDir + path.sep)
+  const texPath = file => path.relative(docDir, file).split(path.sep).join('/')
+  let dest = src
+  if (!inProject || UNSAFE_IN_TEX.test(texPath(src))) {
+    // LaTeX trips over some characters in file names (and older versions over spaces and extra dots): use a plain name
+    const ext = path.extname(src).toLowerCase()
+    const stem = path.basename(src, path.extname(src)).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'picture'
+    const bytes = await fs.readFile(src)
+    for (let i = 1; ; i++) {
+      dest = path.join(docDir, `${stem}${i > 1 ? `-${i}` : ''}${ext}`)
+      const existing = await fs.readFile(dest).catch(() => null)
+      if (!existing) { await fs.writeFile(dest, bytes); break }
+      if (existing.equals(bytes)) break
+    }
+  }
+  return { path: texPath(dest), copied: dest !== src ? path.basename(dest) : null }
+})
+// 📚 Sources → Import from a file: read .bib / .ris files exported from Google Scholar, EasyBib, Mendeley, …
+ipcMain.handle('sources:choose', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Import sources',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Reference files', extensions: ['bib', 'ris', 'txt'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  })
+  return canceled ? [] : readSourceFiles(filePaths.filter(f => SOURCE_FILES.test(f)))
+})
 
 ipcMain.handle('file:read', (_e, root, rel) => fs.readFile(resolveInProject(root, rel), 'utf8'))
 // for optional app data (e.g. .texdesk/tasks.json): null instead of an error when it doesn't exist yet
@@ -574,14 +733,14 @@ ipcMain.handle('setup:status', async () => {
   ])
   const models = ollama.running ? (await ai_.listModels(settings, 'ollama').catch(() => [])).map(m => m.id) : []
   return {
-    tex: { found: !!texStatus.engine, path: texStatus.system, engine: texStatus.engine, builtIn: texStatus.tectonic, downloadBytes: texStatus.downloadBytes },
+    tex: { found: !!texStatus.engine, path: texStatus.system, engine: texStatus.engine, builtIn: texStatus.tectonic, downloadBytes: texStatus.downloadBytes, canInstall: texStatus.canInstall },
     java: !!lt.java,
     languagetool: { installed: !!lt.installed, running: !!lt.running },
     ollama: { running: !!ollama.running, models },
     zotero: { running: !!zot.running, betterBibtex: !!zot.betterBibtex },
   }
 })
-ipcMain.handle('app:info', () => ({ name: pkg.productName, version: pkg.version, user: require('os').userInfo().username }))
+ipcMain.handle('app:info', () => ({ name: pkg.productName, version: pkg.version, user: require('os').userInfo().username, platform: process.platform }))
 // the TeX engine: what's installed, and setting up the built-in one
 ipcMain.handle('tex:status', async () => tex.status(app.getPath('userData'), (await loadSettings()).texEngine))
 ipcMain.handle('tex:install', e => tex.installTectonic(app.getPath('userData'), p => e.sender.send('tex:install-progress', p)))

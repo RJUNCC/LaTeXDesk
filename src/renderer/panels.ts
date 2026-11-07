@@ -1,6 +1,6 @@
 // The tabbed right-hand pane: PDF | Comments | AI | Review | Proof | Tasks | References | Library | Research | History.
 
-export type PanelName = 'pdf' | 'comments' | 'ai' | 'review' | 'proof' | 'tasks' | 'references' | 'library' | 'research' | 'history'
+export type PanelName = 'pdf' | 'comments' | 'ai' | 'review' | 'proof' | 'tasks' | 'references' | 'library' | 'research' | 'history' | 'reader'
 
 const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('#side-tabs button[data-panel]')]
 const panels = () => [...document.querySelectorAll<HTMLElement>('.side-panel')]
@@ -36,9 +36,16 @@ export function setBadge(name: 'ai' | 'tasks' | 'refs' | 'review' | 'comments', 
 
 export function initPanels() {
   for (const t of tabs()) t.onclick = () => showPanel(t.dataset.panel as PanelName)
+  // more tabs than fit in a narrow pane: the mouse wheel scrolls them sideways
+  const bar = document.getElementById('side-tabs')!
+  bar.addEventListener('wheel', ev => {
+    if (bar.scrollWidth <= bar.clientWidth || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return
+    bar.scrollLeft += ev.deltaY
+    ev.preventDefault()
+  }, { passive: false })
   let saved: string | null = null
   try {
     saved = localStorage.getItem('texdesk.panel')
   } catch {}
-  if (saved && tabs().some(t => t.dataset.panel === saved)) showPanel(saved as PanelName)
+  if (saved && tabs().some(t => t.dataset.panel === saved && !t.hidden)) showPanel(saved as PanelName)
 }

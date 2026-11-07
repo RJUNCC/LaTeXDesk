@@ -85,15 +85,31 @@ async function exportBib(citekeys) {
 
 const ZOTERO_TYPE = { article: 'journalArticle', inproceedings: 'conferencePaper', conference: 'conferencePaper', book: 'book', incollection: 'bookSection', phdthesis: 'thesis', mastersthesis: 'thesis', techreport: 'report' }
 
-const unTeX = s => (s ?? '').replace(/\\url\{([^}]*)\}/g, '$1').replace(/\\([&%$#_{}])/g, '$1').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim()
+const ACCENTS = { '"': '̈', "'": '́', '`': '̀', '^': '̂', '~': '̃', c: '̧', '=': '̄', '.': '̇', u: '̆', v: '̌', H: '̋' }
+
+/** BibTeX field text as plain text for Zotero: escapes, accents ({\"o} → ö), \url and braces resolved. */
+const unTeX = s =>
+  (s ?? '')
+    .replace(/\\url\{([^}]*)\}/g, '$1')
+    .replace(/\\\^\{\}/g, '^')
+    .replace(/\\textasciitilde(\{\})?/g, '~')
+    .replace(/\\textbackslash(\{\})?/g, '\\')
+    .replace(/\{?\\(["'`^~=.]|[cuvH](?=[\s{]))\s*\{?([a-zA-Z])\}?\}?/g, (_m, acc, ch) => (ch + ACCENTS[acc]).normalize('NFC'))
+    .replace(/\\([&%$#_{}])/g, '$1')
+    .replace(/[{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 
 /** BibTeX-style fields (from the citation creator) → a Zotero item for the connector. */
 function toZoteroItem(entryType, f, tag) {
   const itemType = f.eprint && f.archiveprefix?.toLowerCase() === 'arxiv' && !f.journal ? 'preprint' : ZOTERO_TYPE[entryType] ?? (f.url ? 'webpage' : 'document')
-  const creators = unTeX(f.author)
+  const creators = (f.author ?? '')
     .split(/\s+and\s+/i)
-    .filter(Boolean)
-    .map(name => {
+    .filter(s => s.trim())
+    .map(raw => {
+      const name = unTeX(raw)
+      // {World Health Organization}: one name, not a first and last name
+      if (/^\{.*\}$/.test(raw.trim()) && !/^\{\\/.test(raw.trim())) return { lastName: name, fieldMode: 1, creatorType: 'author' }
       if (name.includes(',')) {
         const [lastName, firstName] = name.split(',').map(s => s.trim())
         return { firstName, lastName, creatorType: 'author' }
@@ -163,11 +179,19 @@ function parsePrefs(text) {
   return { dataDir: pref('extensions.zotero.dataDir'), useDataDir: pref('extensions.zotero.useDataDir'), fileSync: pref('extensions.zotero.sync.storage.enabled') ?? true }
 }
 
+/** Where Zotero keeps its profiles on this system (Linux: the usual install, then the Flatpak). */
+function profileFolders(platform = process.platform, home = os.homedir(), env = process.env) {
+  if (platform === 'win32') return [path.join(env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'Zotero', 'Zotero', 'Profiles')]
+  if (platform === 'darwin') return [path.join(home, 'Library', 'Application Support', 'Zotero', 'Profiles')]
+  return [path.join(home, '.zotero', 'zotero'), path.join(home, '.var', 'app', 'org.zotero.Zotero', '.zotero', 'zotero')]
+}
+
 async function zoteroPrefs() {
-  const profiles = path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'Zotero', 'Zotero', 'Profiles')
-  for (const dir of await fs.readdir(profiles).catch(() => [])) {
-    const text = await fs.readFile(path.join(profiles, dir, 'prefs.js'), 'utf8').catch(() => null)
-    if (text) return parsePrefs(text)
+  for (const profiles of profileFolders()) {
+    for (const dir of await fs.readdir(profiles).catch(() => [])) {
+      const text = await fs.readFile(path.join(profiles, dir, 'prefs.js'), 'utf8').catch(() => null)
+      if (text) return parsePrefs(text)
+    }
   }
   return { fileSync: true }
 }
@@ -259,6 +283,21 @@ async function pdfBytes({ userData, key }) {
   const a = (await attachments(userData)).find(x => x.key === key && x.pdf)
   if (!a) throw new Error('not a PDF attachment in your library')
   return fs.readFile(a.file)
+}
+
+/** The PDF attached to a library item (by the item's key), or null when it has none. */
+async function itemPdf({ userData, itemKey }) {
+  if (!/^[A-Z0-9]{8}$/.test(itemKey)) throw new Error('bad item key')
+  const a = (await attachments(userData)).find(x => x.parent === itemKey && x.pdf)
+  return a ? fs.readFile(a.file) : null
+}
+
+/** Where Zotero will put a saved item: the library or folder selected in Zotero's left pane (read only). */
+async function saveTarget() {
+  const res = await fetch(`${BASE}/connector/getSelectedCollection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(3000) })
+  if (!res.ok) throw new Error(`Zotero answered HTTP ${res.status}`)
+  const data = await res.json()
+  return { name: data.name || data.libraryName || 'My Library', isFolder: data.id != null, editable: data.editable !== false }
 }
 
 async function saveText({ userData, key, text }) {
@@ -379,4 +418,4 @@ async function retrieve({ userData, ollamaUrl, question, k = 8, perPaper = 3, ci
   return { passages, method }
 }
 
-module.exports = { status, search, exportBib, save, findItem, updateIndex, retrieve, toZoteroItem, embed, storage, collections, collectionItems, missingText, pdfBytes, saveText, parsePrefs }
+module.exports = { status, search, exportBib, save, itemPdf, saveTarget, findItem, updateIndex, retrieve, toZoteroItem, embed, storage, collections, collectionItems, missingText, pdfBytes, saveText, parsePrefs, profileFolders }

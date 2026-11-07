@@ -94,8 +94,9 @@ function buildDialog() {
 
     <section class="as-section">
       <h4>Claude API <span class="as-claude-status muted"></span></h4>
-      <div class="as-row"><label>API key</label><input type="password" class="as-claude-key" placeholder="sk-ant-…  (stored encrypted on this PC)">
+      <div class="as-row"><label>API key</label><input type="password" class="as-claude-key" placeholder="sk-ant-…  (stored encrypted on this computer)">
         <button type="button" class="as-claude-save">Save</button><button type="button" class="as-claude-remove">Remove</button></div>
+      <div class="as-key-error as-claude-error" hidden></div>
     </section>
 
     <section class="as-section">
@@ -103,6 +104,7 @@ function buildDialog() {
       <div class="as-row"><label>Base URL</label><input class="as-openai-url"></div>
       <div class="as-row"><label>API key</label><input type="password" class="as-openai-key" placeholder="optional">
         <button type="button" class="as-openai-save">Save</button></div>
+      <div class="as-key-error as-openai-error" hidden></div>
     </section>
 
     <section class="as-section">
@@ -289,10 +291,24 @@ export async function openAiSettings(onChange: () => void = () => {}) {
   }
   const claudeStatus = () => (q('.as-claude-status').textContent = config.hasKey.anthropic ? '(key saved)' : '(no key)')
   claudeStatus()
+  // saving can fail (e.g. Linux with no keyring to protect the key): say why, next to the field
+  const saveKey = async (provider: 'anthropic' | 'openai', key: string) => {
+    const error = q<HTMLElement>(provider === 'anthropic' ? '.as-claude-error' : '.as-openai-error')
+    error.hidden = true
+    try {
+      return await ai.setKey(provider, key)
+    } catch (e) {
+      error.textContent = `⚠ ${(e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`
+      error.hidden = false
+      return null
+    }
+  }
   q<HTMLButtonElement>('.as-claude-save').onclick = async () => {
     const input = q<HTMLInputElement>('.as-claude-key')
     if (!input.value.trim()) return
-    config = await ai.setKey('anthropic', input.value.trim())
+    const saved = await saveKey('anthropic', input.value.trim())
+    if (!saved) return
+    config = saved
     setConfigCache(config)
     input.value = ''
     delete modelCache.anthropic
@@ -308,7 +324,9 @@ export async function openAiSettings(onChange: () => void = () => {}) {
   }
   q<HTMLButtonElement>('.as-openai-save').onclick = async () => {
     const input = q<HTMLInputElement>('.as-openai-key')
-    config = await ai.setKey('openai', input.value.trim())
+    const saved = await saveKey('openai', input.value.trim())
+    if (!saved) return
+    config = saved
     setConfigCache(config)
     input.value = ''
     delete modelCache.openai

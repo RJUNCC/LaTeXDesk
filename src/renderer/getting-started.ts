@@ -4,9 +4,10 @@ import { ai } from './ai-client'
 import { RECOMMENDED } from './ai-settings'
 import { lt } from './grammar'
 import { installBuiltInTex } from './tex-setup'
+import { FULL_TEX, JAVA_HTML, OLLAMA_HTML, ZOTERO_HTML } from './platform'
 
 type SetupStatus = {
-  tex: { found: boolean; path: string | null; engine: 'system' | 'tectonic' | null; builtIn: boolean; downloadBytes: number }
+  tex: { found: boolean; path: string | null; engine: 'system' | 'tectonic' | null; builtIn: boolean; downloadBytes: number; canInstall: boolean }
   java: boolean
   languagetool: { installed: boolean; running: boolean }
   ollama: { running: boolean; models: string[] }
@@ -102,15 +103,17 @@ async function renderChecks() {
           ? 'Using the built-in TeX engine. A package is downloaded the first time a document uses it.'
           : s.tex.found
             ? `Found ${esc(s.tex.path ?? '')}`
-            : `Set up the built-in engine (about ${Math.round(s.tex.downloadBytes / 1e6)} MB, downloaded once), or install <a href="https://miktex.org/download" target="_blank">MiKTeX</a> (free, a full distribution) and restart LaTeXDesk.`,
-      action: s.tex.found ? undefined : { label: 'Set up built-in TeX', run: () => installBuiltInTex() },
+            : s.tex.canInstall
+              ? `Set up the built-in engine (about ${Math.round(s.tex.downloadBytes / 1e6)} MB, downloaded once), or ${FULL_TEX.html} and restart LaTeXDesk.`
+              : `${FULL_TEX.html[0].toUpperCase() + FULL_TEX.html.slice(1)}, then restart LaTeXDesk.`,
+      action: s.tex.found || !s.tex.canInstall ? undefined : { label: 'Set up built-in TeX', run: () => installBuiltInTex() },
     },
     {
       ok: s.java && s.languagetool.installed,
       optional: true,
       title: 'Grammar checking',
       detail: !s.java
-        ? 'Needs Java: install <a href="https://adoptium.net/" target="_blank">Temurin</a> (free), then come back here.'
+        ? `Needs Java: ${JAVA_HTML}, then come back here.`
         : s.languagetool.installed
           ? 'LanguageTool is installed and runs on your computer.'
           : 'Java is ready. LanguageTool (about 250 MB) checks grammar and style on your computer.',
@@ -121,7 +124,7 @@ async function renderChecks() {
       optional: true,
       title: 'Local AI (autocomplete, review, proofs)',
       detail: !s.ollama.running
-        ? 'Install <a href="https://ollama.com/download" target="_blank">Ollama</a> (free) to run AI on your computer, or add a Claude API key in Settings. A graphics card with 8 GB+ of memory helps.'
+        ? `${OLLAMA_HTML} to run AI on your computer, or add a Claude API key in Settings. A graphics card with 8 GB+ of memory helps.`
         : missingModels.length
           ? `Ollama is running. Recommended models not downloaded yet: ${missingModels.map(esc).join(', ')} (about 20 GB in total).`
           : 'Ollama is running with the recommended models.',
@@ -136,7 +139,7 @@ async function renderChecks() {
           ? 'Connected: cite from your library, and fact-check against your PDFs.'
           : s.zotero.running
             ? 'Zotero is running. Add the <a href="https://retorque.re/zotero-better-bibtex/installation/" target="_blank">Better BibTeX</a> plugin to cite from it.'
-            : 'Optional: <a href="https://www.zotero.org/download/" target="_blank">Zotero</a> with the Better BibTeX plugin, then keep it open while you write.',
+            : `Optional: ${ZOTERO_HTML} with the Better BibTeX plugin, then keep it open while you write.`,
     },
   ]
   list.replaceChildren(

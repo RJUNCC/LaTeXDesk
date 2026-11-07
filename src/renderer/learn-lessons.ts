@@ -186,7 +186,7 @@ As equation~\\ref{eq:energy} shows…</pre>
   \\caption{What this shows}
   \\label{fig:picture}
 \\end{figure}</pre>
-      <p>Refer to it with <code>Figure~\\ref{fig:picture}</code>. The practice folder has an image called <b>picture.png</b> for you to use. In your own projects, the toolbar's <b>Figure</b> button lists your images.</p>`,
+      <p>Refer to it with <code>Figure~\\ref{fig:picture}</code>. The practice folder has an image called <b>picture.png</b> for you to use. In your own projects, the toolbar's <b>Figure</b> button lets you pick a picture from anywhere on your computer and copies it into the project for you.</p>`,
     starter: doc('Here is a picture:\n\n% insert picture.png in a figure here', '\\usepackage{graphicx}\n'),
     solution: doc('Here is a picture, shown in Figure~\\ref{fig:picture}.\n\n\\begin{figure}[h]\n  \\centering\n  \\includegraphics[width=0.6\\linewidth]{picture}\n  \\caption{A practice picture}\n  \\label{fig:picture}\n\\end{figure}', '\\usepackage{graphicx}\n'),
     files: ['image'],
@@ -205,7 +205,10 @@ As equation~\\ref{eq:energy} shows…</pre>
 
 \\bibliographystyle{plain}
 \\bibliography{refs}      ← refs.bib, without “.bib”</pre>
-      <p>The practice folder has a <b>refs.bib</b> containing <code>knuth1984</code>. In real projects, the <b>Research</b> tab turns a DOI into a .bib entry, and Zotero users can cite straight from their library.</p>`,
+      <p>The practice folder has a <b>refs.bib</b> containing <code>knuth1984</code>.</p>
+      <p><b>In your own documents you don’t have to write any of this.</b> Press <b>📚 Sources</b> on the toolbar (in Code and Visual mode):
+      paste a link, DOI or ISBN, type a title, or paste the references you already have, and LaTeXDesk writes the .bib entries.
+      <b>Cite</b> puts the citation where your cursor is, and the <b>Reference style</b> menu (APA, Harvard, Chicago, IEEE, numbered) writes the two lines above for you.</p>`,
     starter: doc('Typesetting maths well is hard.\n\n% cite knuth1984 above, then add the bibliography here'),
     solution: doc('Typesetting maths well is hard \\cite{knuth1984}.\n\n\\bibliographystyle{plain}\n\\bibliography{refs}'),
     files: ['bib'],

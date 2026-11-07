@@ -95,6 +95,16 @@ export async function bibEntries(host: AppHost) {
   return entries
 }
 
+/**
+ * The source an error in the generated reference list (.bbl) comes from: the entry of the last \bibitem at or
+ * before the reported line. BibTeX copies each entry's text into the .bbl, so the fix belongs in the .bib.
+ */
+export async function bblSource(host: AppHost, bbl: string, line: number) {
+  const upTo = bbl.split('\n').slice(0, line || undefined).join('\n')
+  const key = [...upTo.matchAll(/\\bibitem\s*(?:\[(?:[^[\]]|\[[^\]]*\])*\])?\s*\{([^}]+)\}/g)].at(-1)?.[1].trim()
+  return key ? (await bibEntries(host)).get(key) ?? null : null
+}
+
 /** The .bib file the main document uses (\bibliography / \addbibresource), else refs.bib. */
 export async function bibTarget(host: AppHost) {
   const rootDoc = host.mainFile()
@@ -127,6 +137,14 @@ export async function addEntries(host: AppHost, bibtex: string) {
   await host.applyFileText(file, `${before.replace(/\s*$/, '')}${before.trim() ? '\n\n' : ''}${fresh.map(e => e.raw).join('\n\n')}\n`)
   if (!declared) await declareBibliography(host, file)
   return fresh.map(e => e.key)
+}
+
+/** Replace one entry's text where it is (editing a source keeps its key, so citations stay valid). */
+export async function replaceEntry(host: AppHost, entry: BibEntry, raw: string) {
+  const text = await host.fileText(entry.file)
+  const at = parseBib(text, entry.file).find(e => e.key === entry.key)
+  if (!at) throw new Error(`${entry.key} is no longer in ${entry.file}`)
+  await host.applyFileText(entry.file, text.slice(0, at.start) + raw + text.slice(at.end))
 }
 
 /** Remove entries by key from whichever .bib files hold them (used for "remove unused"). */

@@ -56,6 +56,9 @@ import {
   TextArgument,
 } from '../../lezer-latex/latex.terms.mjs'
 import { FootnoteWidget } from './visual-widgets/footnote'
+import { CitationWidget } from './visual-widgets/citation'
+import { BibliographyWidget, HiddenWidget } from './visual-widgets/bibliography'
+import { citationProvider, citationText, refreshCitations } from './citations'
 import { getListItems } from '../toolbar/lists'
 import { TildeWidget } from './visual-widgets/tilde'
 import { BeginTheoremWidget } from './visual-widgets/begin-theorem'
@@ -91,6 +94,15 @@ function shouldDecorate(
   extents: { from: number; to: number }
 ) {
   return state.readOnly || !selectionIntersects(state.selection, extents)
+}
+
+// LaTeXDesk: the reference style named in the document, for the reference list widget
+function bibliographyStyleName(state: EditorState) {
+  const bst = state.doc
+    .toString()
+    .match(/^[^%\n]*\\bibliographystyle\s*\{([^}]*)\}/m)?.[1]
+    .trim()
+  return bst ? citationProvider().styleName(bst) : 'No style chosen yet'
 }
 
 function shouldDecorateFromLineEdges(
@@ -659,6 +671,28 @@ const createDecorations = (
           }
         }
       } else if (nodeRef.type.is('Cite')) {
+        // LaTeXDesk: show the citation as it reads, e.g. (Smith & Lee, 2020), collapsed until the cursor enters it
+        const keysNode = nodeRef.node.getChild('BibKeyArgument')
+        const commandNode = nodeRef.node.firstChild
+        if (keysNode && commandNode && shouldDecorate(state, nodeRef)) {
+          const command = state
+            .sliceDoc(commandNode.from, commandNode.to)
+            .replace(/^\\/, '')
+          const keys = state
+            .sliceDoc(keysNode.from + 1, keysNode.to - 1)
+            .split(',')
+            .map(k => k.trim())
+            .filter(Boolean)
+          if (keys.length) {
+            const { text, title, missing } = citationText(command, keys)
+            decorations.push(
+              Decoration.replace({
+                widget: new CitationWidget(text, title, missing),
+              }).range(nodeRef.from, nodeRef.to)
+            )
+            return false
+          }
+        }
         // \cite command with a bibkey argument
         if (shouldDecorate(state, nodeRef)) {
           const argumentNode = nodeRef.node
@@ -1051,6 +1085,29 @@ const createDecorations = (
             )
           )
         }
+      } else if (nodeRef.type.is('BibliographyCommand')) {
+        // LaTeXDesk: the reference list as a labeled block with its style
+        if (shouldDecorate(state, nodeRef)) {
+          decorations.push(
+            Decoration.replace({
+              widget: new BibliographyWidget(
+                bibliographyStyleName(state),
+                citationProvider().sourceCount()
+              ),
+            }).range(nodeRef.from, nodeRef.to)
+          )
+          return false
+        }
+      } else if (nodeRef.type.is('BibliographyStyleCommand')) {
+        if (shouldDecorate(state, nodeRef)) {
+          decorations.push(
+            Decoration.replace({ widget: new HiddenWidget() }).range(
+              nodeRef.from,
+              nodeRef.to
+            )
+          )
+          return false
+        }
       } else if (
         nodeRef.type.is('FootnoteCommand') ||
         nodeRef.type.is('EndnoteCommand')
@@ -1096,6 +1153,22 @@ const createDecorations = (
 
           if (commandName.length > 0) {
             const textArgumentNode = commandNode.getChild('TextArgument')
+
+            if (
+              commandName === '\\printbibliography' &&
+              shouldDecorate(state, nodeRef)
+            ) {
+              // LaTeXDesk: biblatex's reference list
+              decorations.push(
+                Decoration.replace({
+                  widget: new BibliographyWidget(
+                    'biblatex',
+                    citationProvider().sourceCount()
+                  ),
+                }).range(nodeRef.from, nodeRef.to)
+              )
+              return false
+            }
 
             if (commandName === '\\keywords') {
               if (shouldDecorate(state, nodeRef)) {
@@ -1279,7 +1352,10 @@ export const atomicDecorations: Extension = [
       } else if (
         // only update the decorations when the mouse is not making a selection
         !value.mousedown &&
-        (tree !== value.previousTree || tr.selection || hasMouseDownEffect(tr))
+        (tree !== value.previousTree ||
+          tr.selection ||
+          hasMouseDownEffect(tr) ||
+          tr.effects.some(effect => effect.is(refreshCitations)))
       ) {
         // tree changed, or selection changed, or mousedown ended
         // TODO: update the existing decorations for the changed range(s)?

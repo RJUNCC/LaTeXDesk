@@ -144,11 +144,12 @@ export class FormatToolbar {
     this.bar.append(
       this.button('⊞ Table', 'Insert table', () => this.tableDialog()),
       this.button('▣ Figure', 'Insert figure', () => insertFigure(v, ctx)),
+      this.button('📚 Sources', 'Add your sources, cite them, and choose the reference style', () => ctx.openSources()),
       this.button('Link', 'Insert link (\\href)', () => insertLink(v, ctx)),
       this.button('⇄ Markov', 'Markov chain builder (place the cursor inside an existing chain to edit it)', () => openMarkovBuilder(v, ctx)),
       this.menuButton('+ Insert', 'Insert', () => [
         { label: 'Footnote', hint: '\\footnote', run: () => insertSnippet(v, '\\footnote{#{}}') },
-        { label: 'Citation', hint: '\\cite', run: () => insertWithCompletion(v, 'cite') },
+        { label: 'Citation…', hint: '📚 Sources', run: () => ctx.openSources() },
         { label: 'Cross-reference', hint: '\\ref', run: () => insertWithCompletion(v, 'ref') },
         { label: 'Label', hint: '\\label', run: () => insertSnippet(v, '\\label{#{}}') },
         'sep',

@@ -38,11 +38,12 @@ import { highlightStyle, theme } from './editor-theme'
 import { FormatToolbar } from './toolbar'
 import { FormatContext, toggleCommand } from './format'
 import { TEMPLATES, Template } from './templates'
-import { initPanels, PanelName, showPanel } from './panels'
+import { currentPanel, initPanels, PanelName, showPanel } from './panels'
 import { applyRecommendedDefaults, openAiSettings } from './ai-settings'
 import type { AppHost } from './host'
 import { reviewChanges } from './diff-review'
-import { explainError, initAiPanel } from './ai-panel'
+import { explainError, explainSourceError, initAiPanel } from './ai-panel'
+import { BibEntry, bblSource } from './bib-project'
 import { aiAutocomplete } from './autocomplete'
 import { initTasks } from './tasks'
 import { equationPreview, setPreambleMacros } from './equation-preview'
@@ -60,10 +61,16 @@ import { initSpell, setSpellEnabled, spellCheck } from './spell'
 import { initHistory } from './history'
 import { initReferences, shouldSyncOnCompile } from './references-panel'
 import { initLibrary } from './library-panel'
+import { initPaperReader } from './paper-reader'
 import { initReview } from './review-panel'
 import { initProof } from './proof-panel'
 import { grammarCheck } from './grammar'
 import { ensureInBib, libraryItems, refreshLibrary, syncBeforeCompile } from './zotero-client'
+import { importSources, initSources, openSources } from './sources-dialog'
+import { diffLines } from 'diff'
+import { citeLabel, plain } from './bib-sources'
+import { styleName } from './bib-style'
+import { setCitationProvider } from '@/features/source-editor/extensions/visual/citations'
 
 declare global {
   interface Window {
@@ -73,6 +80,8 @@ declare global {
       chooseProject(): Promise<string | null>
       listFiles(root: string): Promise<{ path: string; editable: boolean }[]>
       reveal(root: string): Promise<void>
+      addFiles(root: string): Promise<{ added: string[]; sources: { name: string; text: string }[] }>
+      chooseImage(root: string, mainDir: string): Promise<{ path: string; copied: string | null } | null>
       readFile(root: string, rel: string): Promise<string>
       readFileOptional(root: string, rel: string): Promise<string | null>
       exportSubmission(root: string, mainFile: string, zipPath?: string): Promise<unknown>
@@ -258,12 +267,25 @@ const formatContext: FormatContext = {
   ensurePackage,
   ensurePreamble,
   prompt: (message, initial) => prompt(message, initial),
-  projectImages: () => {
+  openSources: () => void openSources(),
+  chooseImage: async () => {
+    if (!root) {
+      setStatus('Open or create a project first', 'warn')
+      return null
+    }
     // \includegraphics paths are relative to the main document's folder
     const mainDir = mainFile?.includes('/') ? mainFile.slice(0, mainFile.lastIndexOf('/') + 1) : ''
-    return files
-      .filter(f => /\.(png|jpe?g|pdf|eps)$/i.test(f.path))
-      .map(f => (f.path.startsWith(mainDir) ? f.path.slice(mainDir.length) : f.path))
+    try {
+      const picked = await api.chooseImage(root, mainDir)
+      if (picked?.copied) {
+        await refreshFiles()
+        setStatus(`Copied ${picked.copied} into the project`, 'ok')
+      }
+      return picked?.path ?? null
+    } catch (e) {
+      setStatus(String(e).replace(/^Error: (Error invoking remote method '[^']*': )?(Error: )?/, ''), 'error')
+      return null
+    }
   },
 }
 const toolbar = new FormatToolbar($('format-bar'), view, formatContext)
@@ -373,6 +395,7 @@ async function openProject(dir: string, offerTemplates = true) {
   await loadReview()
   projectSymbols.labels.clear()
   projectSymbols.bibKeys.clear()
+  projectSymbols.bibFiles.clear()
   logEntries = []
   pdf.clear()
   document.title = `${dir.split(/[\\/]/).pop()} — LaTeXDesk`
@@ -414,9 +437,10 @@ async function guessMainFile() {
   return tex[0]?.path ?? null
 }
 
-async function refreshFiles() {
+async function refreshFiles(onlyIfChanged = false) {
+  const before = JSON.stringify(files)
   files = (await api.listFiles(root!)).sort((a, b) => a.path.localeCompare(b.path))
-  renderFileList()
+  if (!onlyIfChanged || JSON.stringify(files) !== before) renderFileList()
 }
 
 function renderFileList() {
@@ -506,6 +530,16 @@ function scheduleAutoSave() {
     await save()
     maybeCompile(false)
   }, 1500)
+}
+
+/** File → Add Existing File: copy files into the project; reference files join the bibliography instead. */
+async function addExistingFiles() {
+  if (!root) return setStatus('Open or create a project first', 'warn')
+  const { added, sources } = await api.addFiles(root)
+  if (added.length) await refreshFiles()
+  const notes = added.length ? [`Added ${added.join(', ')}`] : []
+  if (sources.length) notes.push(await importSources(sources))
+  if (notes.length) setStatus(notes.join(' · '), 'ok')
 }
 
 async function newFile() {
@@ -810,6 +844,25 @@ function renderLogs(raw: string) {
       if (file && files.some(f => f.path === file)) {
         div.onclick = () => openFile(file, e.line ? Number(e.line) : undefined)
       }
+      // an error in the generated reference list comes from a source in the .bib: point there instead
+      let source: BibEntry | null = null
+      if (file?.endsWith('.bbl') && root) {
+        api
+          .readFile(root, file)
+          .then(bbl => bblSource(host, bbl, Number(e.line) || 0))
+          .then(async src => {
+            if (!src) return
+            source = src
+            const line = (await fileText(src.file)).slice(0, src.start).split('\n').length
+            loc.textContent = `${src.file}:${line}`
+            const note = document.createElement('div')
+            note.className = 'log-source'
+            note.textContent = `From your source “${plain(src.fields.title) || src.key}” (${src.key})`
+            head.after(note)
+            div.onclick = () => openFile(src.file, line)
+          })
+          .catch(() => {})
+      }
       if (e.level === 'error') {
         const fix = document.createElement('button')
         fix.className = 'log-fix'
@@ -817,7 +870,8 @@ function renderLogs(raw: string) {
         fix.title = 'Ask the AI what this error means and propose a fix you can review'
         fix.onclick = ev => {
           ev.stopPropagation()
-          explainError(e, file)
+          if (source) explainSourceError(e, source)
+          else explainError(e, file)
         }
         div.appendChild(fix)
       }
@@ -847,7 +901,11 @@ async function syncForward() {
 
 function toggleLogs(force?: boolean) {
   const panel = $('logs')
-  panel.hidden = force === undefined ? !panel.hidden : !force
+  // the logs sit over the PDF: from another tab (AI, Refs…) the button brings the PDF tab forward with them
+  const showing = !panel.hidden && currentPanel() === 'pdf'
+  const open = force ?? !showing
+  if (open) showPanel('pdf')
+  panel.hidden = !open
 }
 
 function initSplitter() {
@@ -953,6 +1011,7 @@ api.onMenu(channel => {
   switch (channel) {
     case 'open-folder': return chooseAndOpen()
     case 'new-file': return newFile()
+    case 'add-files': return void addExistingFiles()
     case 'templates': return showTemplates()
     case 'save': return save()
     case 'compile': return compile()
@@ -986,6 +1045,14 @@ api.onMenu(channel => {
 $('compile-btn').onclick = () => (compiling ? api.cancelCompile() : compile())
 $('open-btn').onclick = $('empty-open').onclick = () => chooseAndOpen()
 $('new-file-btn').onclick = () => newFile()
+$('add-files-btn').onclick = () => void addExistingFiles()
+// files added to the project folder outside the app show up when you come back to it
+window.addEventListener('focus', async () => {
+  if (!root) return
+  await refreshFiles(true)
+  // .bib files can change on disk too (e.g. Zotero's automatic export)
+  for (const f of files) if (f.path.endsWith('.bib')) indexProjectText(f.path, await fileText(f.path))
+})
 $('templates-btn').onclick = $('empty-template').onclick = () => showTemplates()
 $('empty-import').onclick = () => void importDoc()
 $('logs-btn').onclick = () => toggleLogs()
@@ -1013,14 +1080,38 @@ const projectListeners: (() => void)[] = []
 /** Replace a file's text: through the editor when it's open (undoable), else its buffer, else disk. */
 async function applyFileText(path: string, text: string) {
   if (!root) return
-  // narrow the change to the differing middle so the cursor, undo history, comments and suggestions stay sensible
+  // one change per changed region, each narrowed to the characters that differ, so the cursor, undo history,
+  // comments and suggestions in untouched text stay put (one change spanning a preamble edit and an edit at
+  // the end would swallow everything between them)
   const narrowed = (old: string) => {
-    let start = 0
-    while (start < old.length && start < text.length && old[start] === text[start]) start++
-    let endOld = old.length
-    let endNew = text.length
-    while (endOld > start && endNew > start && old[endOld - 1] === text[endNew - 1]) endOld--, endNew--
-    return { from: start, to: endOld, insert: text.slice(start, endNew) }
+    const changes: { from: number; to: number; insert: string }[] = []
+    let pos = 0
+    let pending: { from: number; removed: string; added: string } | null = null
+    const flush = () => {
+      if (!pending) return
+      const { from, removed, added } = pending
+      let start = 0
+      while (start < removed.length && start < added.length && removed[start] === added[start]) start++
+      let endOld = removed.length
+      let endNew = added.length
+      while (endOld > start && endNew > start && removed[endOld - 1] === added[endNew - 1]) endOld--, endNew--
+      changes.push({ from: from + start, to: from + endOld, insert: added.slice(start, endNew) })
+      pending = null
+    }
+    for (const part of diffLines(old, text)) {
+      if (!part.added && !part.removed) {
+        flush()
+        pos += part.value.length
+        continue
+      }
+      pending ??= { from: pos, removed: '', added: '' }
+      if (part.removed) {
+        pending.removed += part.value
+        pos += part.value.length
+      } else pending.added += part.value
+    }
+    flush()
+    return changes
   }
   if (path === currentPath) {
     view.dispatch({ changes: narrowed(view.state.doc.toString()), userEvent: 'input.ai', scrollIntoView: true })
@@ -1139,9 +1230,22 @@ projectListeners.push(() => void refreshMacros())
   initAiPanel(host)
   initTasks(host)
   initResearch(host)
+  initSources(host)
+  // Visual mode shows citations as they read, from the project's .bib entries
+  const sourceFields = (key: string) => [...projectSymbols.bibFiles.values()].find(m => m.has(key))?.get(key)
+  setCitationProvider({
+    label: key => {
+      const f = sourceFields(key)
+      return f ? { ...citeLabel(f), title: plain(f.title) } : null
+    },
+    styleName,
+    sourceCount: () => new Set([...projectSymbols.bibFiles.values()].flatMap(m => [...m.keys()])).size,
+    openSources: () => void openSources(),
+  })
   initHistory(host)
   initReferences(host, { syncOnCompile: settings.zoteroSyncOnCompile !== false, persist: on => api.setSettings({ zoteroSyncOnCompile: on }) })
   initLibrary(host)
+  initPaperReader(host)
   initReview(host)
   initProof(host)
   initComments(host, {

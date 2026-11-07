@@ -34,10 +34,15 @@ function aiSettings(settings) {
   }
 }
 
-// ---------- API keys (encrypted with Windows DPAPI via safeStorage) ----------
+// ---------- API keys (encrypted via safeStorage: Windows DPAPI, or the Linux keyring) ----------
+
+const NO_KEYRING = 'No keyring was found, so the key was not saved. Install and start gnome-keyring (or KWallet), then restart LaTeXDesk. Local AI with Ollama needs no key.'
 
 function encryptKey(key) {
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure key storage is not available on this system')
+  const linux = process.platform === 'linux'
+  if (!safeStorage.isEncryptionAvailable()) throw new Error(linux ? NO_KEYRING : 'Secure key storage is not available on this system')
+  // without a keyring, Electron on Linux may "encrypt" with a fixed password, which protects nothing
+  if (linux && safeStorage.getSelectedStorageBackend() === 'basic_text') throw new Error(NO_KEYRING)
   return safeStorage.encryptString(key).toString('base64')
 }
 

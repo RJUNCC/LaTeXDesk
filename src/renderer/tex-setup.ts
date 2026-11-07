@@ -1,5 +1,6 @@
 // Setting up a TeX engine. When no TeX is installed, LaTeXDesk offers its built-in engine (Tectonic, about
-// 20 MB, downloaded once), or MiKTeX for people who want a full distribution.
+// 20 MB, downloaded once), or MiKTeX / TeX Live for people who want a full distribution.
+import { FULL_TEX } from './platform'
 
 export type TexStatus = {
   preference: 'auto' | 'system' | 'tectonic'
@@ -9,6 +10,8 @@ export type TexStatus = {
   biber: boolean
   tectonicVersion: string
   downloadBytes: number
+  /** false where there's no built-in engine for this computer (then only a full distribution helps) */
+  canInstall: boolean
 }
 type Progress = { phase: 'download' | 'unpack' | 'done'; received?: number; total?: number; fraction: number }
 type Bridge = { tex: { status(): Promise<TexStatus>; install(): Promise<TexStatus>; onInstallProgress(cb: (p: Progress) => void): void } }
@@ -49,16 +52,16 @@ export async function offerTexSetup(onReady: () => void) {
     <form method="dialog">
       <h3>Set up PDF making</h3>
       <p>To turn your document into a PDF, LaTeXDesk needs a TeX engine. This computer doesn't have one yet.</p>
-      <div class="ts-option recommended">
+      <div class="ts-option recommended"${status.canInstall ? '' : ' hidden'}>
         <div><strong>Built-in engine</strong> <span class="muted">(recommended)</span>
           <div class="muted">About ${mb(status.downloadBytes)}, downloaded once. The first time a document uses a LaTeX package, it's downloaded too, so the first compile needs the internet and takes a little longer.</div></div>
         <button type="button" class="primary ts-install">Set up</button>
       </div>
       <div class="ts-progress" hidden><div class="ts-bar"><span></span></div><span class="ts-text muted"></span></div>
       <div class="ts-option">
-        <div><strong>MiKTeX</strong>
-          <div class="muted">A full TeX distribution (about 1 GB once packages are added), if you need biblatex/biber or work offline a lot. Choose “install missing packages on the fly: Yes”, then restart LaTeXDesk.</div></div>
-        <a class="button" href="https://miktex.org/download" target="_blank">Get MiKTeX</a>
+        <div><strong>${FULL_TEX.name}</strong>
+          <div class="muted">${FULL_TEX.detail} ${FULL_TEX.steps}</div></div>
+        <a class="button" href="${FULL_TEX.link}" target="_blank">Get ${FULL_TEX.name}</a>
       </div>
       <menu><button value="close">Not now</button></menu>
     </form>`

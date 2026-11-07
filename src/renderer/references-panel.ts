@@ -4,9 +4,11 @@ import { BibEntry, CiteUse, bibEntries, citedKeys, removeEntriesText } from './b
 import { reviewChanges } from './diff-review'
 import type { AppHost } from './host'
 import { panelEl, setBadge, whenShown } from './panels'
-import { authorLine, ensureInBib, libraryItems, refreshLibrary, syncBeforeCompile, zotero, zoteroStatus } from './zotero-client'
+import { openPaper } from './paper-reader'
+import { ZItem, authorLine, ensureInBib, mayHavePdf, refreshLibrary, saveToZotero, syncBeforeCompile, zoteroItemFor, zoteroStatus } from './zotero-client'
 
-type Row = { key: string; entry?: BibEntry; uses: CiteUse[]; inZotero: boolean }
+/** `z`: the paper in Zotero, found by key or by DOI, arXiv id or title (Zotero may know it under its own key) */
+type Row = { key: string; entry?: BibEntry; uses: CiteUse[]; inZotero: boolean; z?: ZItem }
 
 let host: AppHost
 let rows: Row[] = []
@@ -49,10 +51,12 @@ export const shouldSyncOnCompile = () => syncOnCompile
 export async function refresh() {
   if (!host?.root()) return
   await refreshLibrary()
-  const zKeys = new Set(libraryItems().map(i => i.citekey))
   const [uses, entries] = await Promise.all([citedKeys(host), bibEntries(host)])
   const keys = new Set([...uses.keys(), ...entries.keys()])
-  rows = [...keys].map(key => ({ key, entry: entries.get(key), uses: uses.get(key) ?? [], inZotero: zKeys.has(key) }))
+  rows = [...keys].map(key => {
+    const z = zoteroItemFor(key, entries.get(key)?.fields)
+    return { key, entry: entries.get(key), uses: uses.get(key) ?? [], inZotero: !!z, z }
+  })
   // problems first, then most-cited
   const rank = (r: Row) => (!r.entry ? 0 : !r.uses.length ? 1 : 2)
   rows.sort((a, b) => rank(a) - rank(b) || b.uses.length - a.uses.length || a.key.localeCompare(b.key))
@@ -61,7 +65,7 @@ export async function refresh() {
 
 function describe(r: Row) {
   const f = r.entry?.fields
-  const z = libraryItems().find(i => i.citekey === r.key)
+  const z = r.z
   const title = (f?.title ?? z?.title ?? '').replace(/[{}]/g, '')
   const authors = f?.author
     ? f.author.replace(/[{}]/g, '').split(/\s+and\s+/i).map(a => (a.includes(',') ? a.split(',')[0] : a.trim().split(' ').pop()!))
@@ -122,7 +126,7 @@ function row(r: Row) {
   if (!r.entry) head.append(badge('missing', 'bad', 'Cited, but there is no entry for it in the .bib files'))
   else if (!r.uses.length) head.append(badge('unused', 'warn', 'In the bibliography but never cited'))
   else head.append(badge(`cited ${r.uses.length}×`, 'ok'))
-  head.append(r.inZotero ? badge('Zotero', 'z', 'In your Zotero library') : badge('not in Zotero', 'muted'))
+  head.append(r.z ? badge('Zotero', 'z', r.z.citekey === r.key ? 'In your Zotero library' : `In your Zotero library, where Better BibTeX calls it ${r.z.citekey}`) : badge('not in Zotero', 'muted'))
   const title = Object.assign(document.createElement('div'), { className: 'ref-title', textContent: d.title })
   const who = Object.assign(document.createElement('div'), { className: 'muted ref-who', textContent: d.who })
   const uses = document.createElement('div')
@@ -132,21 +136,22 @@ function row(r: Row) {
   const acts = document.createElement('div')
   acts.className = 'ref-acts'
   if (!r.entry && r.inZotero) acts.append(button('Add from Zotero', async () => (await ensureInBib(host, [r.key]), await refresh())))
-  if (r.entry && !r.inZotero)
-    acts.append(button('Save to Zotero', async () => {
+  if (r.entry && mayHavePdf(r.entry.fields, r.inZotero)) acts.append(button('📄 Read', () => void openPaper({ key: r.key, title: d.title, fields: r.entry!.fields, zoteroItemKey: r.z?.itemKey })))
+  else if (!r.entry && r.z) acts.append(button('📄 Read', () => void openPaper({ key: r.key, title: d.title, fields: { doi: r.z!.doi ?? '', url: r.z!.url ?? '' }, zoteroItemKey: r.z!.itemKey })))
+  if (r.entry && !r.inZotero) {
+    const save = button('Save to Zotero', async () => {
+      save.disabled = true
+      save.textContent = 'Saving…'
       try {
-        const item = await zotero.save({ entryType: r.entry!.type, fields: r.entry!.fields })
-        host.setStatus(item.citekey === r.key ? `Saved ${r.key} to Zotero` : `Saved to Zotero as ${item.citekey} (the project still uses ${r.key})`, 'ok')
-        await refreshLibrary(true)
-        await refresh()
+        host.setStatus(await saveToZotero(r.entry!), 'ok')
       } catch (e) {
-        host.setStatus(`Couldn't save to Zotero: ${(e as Error).message}`, 'error')
+        host.setStatus(`Couldn't save to Zotero: ${(e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`, 'error')
       }
-    }))
-  if (r.inZotero) {
-    const z = libraryItems().find(i => i.citekey === r.key)
-    if (z) acts.append(button('Show in Zotero', () => window.open(`zotero://select/library/items/${z.itemKey}`)))
+      await refresh()
+    })
+    acts.append(save)
   }
+  if (r.z) acts.append(button('Show in Zotero', () => window.open(`zotero://select/library/items/${r.z!.itemKey}`)))
   div.append(head, title, who, uses, acts)
   return div
 }

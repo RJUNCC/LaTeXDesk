@@ -7,6 +7,10 @@ export type UpdateState = {
   notes?: string
   percent?: number
   error?: string | null
+  /** installed from a Linux package (.pacman/.deb): installing asks for the password */
+  package?: string | null
+  /** no graphical password prompt on this system: the command that installs the downloaded update */
+  manual?: string | null
 }
 type Bridge = {
   update: {
@@ -67,6 +71,16 @@ function render(s: UpdateState) {
     case 'downloading':
       return show(`<strong>Downloading the update…</strong><div class="uc-bar"><span style="width:${s.percent ?? 0}%"></span></div><span class="muted">${s.percent ?? 0}%</span>`, [])
     case 'ready':
+      if (s.manual)
+        return show(`<strong>Update downloaded</strong><p class="muted">To install LaTeXDesk ${esc(s.version ?? '')}, run this in a terminal, then reopen LaTeXDesk:</p><code class="uc-command">${esc(s.manual)}</code>`, [
+          ['Copy command', () => void navigator.clipboard.writeText(s.manual!), true],
+          ['OK', hide],
+        ])
+      if (s.package)
+        return show(`<strong>Update ready</strong><p class="muted">Installing LaTeXDesk ${esc(s.version ?? '')} asks for your password. Your work is saved first.</p>`, [
+          ['Install and restart', () => void restart(), true],
+          ['Later', hide],
+        ])
       return show(`<strong>Update ready</strong><p class="muted">LaTeXDesk ${esc(s.version ?? '')} will be installed when you close the app. Your work is saved first.</p>`, [
         ['Restart now', () => void restart(), true],
         ['When I close it', hide],

@@ -1,6 +1,6 @@
 // Research helpers (main process): turn a DOI / arXiv id / ISBN / URL into BibTeX, and search papers.
 // Plain HTTP to public APIs; no AI and no keys involved.
-const UA = 'LaTeXDesk/0.7 (desktop LaTeX editor)'
+const UA = 'LaTeXDesk (desktop LaTeX editor; https://github.com/RJUNCC/LaTeXDesk)'
 const TIMEOUT = 15000
 
 async function get(url, accept) {
@@ -16,12 +16,31 @@ async function get(url, accept) {
 // ---------- identifier detection ----------
 
 /** Work out what the user pasted. */
+// Sites that show arXiv papers under their arXiv id (alphaXiv, Hugging Face Papers, ar5iv…): look them up on arXiv
+const ARXIV_MIRRORS = /^(?:www\.)?(?:alphaxiv\.org|arxiv\.org|export\.arxiv\.org|ar5iv\.labs\.arxiv\.org|ar5iv\.org|huggingface\.co|semanticscholar\.org|scirate\.com|arxiv-sanity-lite\.com)$/i
+
+/** The arXiv id in a link to a paper on one of those sites, as a match ([, id]), or null. */
+function arxivMirror(s) {
+  let url
+  try {
+    url = new URL(s)
+  } catch {
+    return null
+  }
+  if (!ARXIV_MIRRORS.test(url.hostname)) return null
+  // Hugging Face also hosts models and datasets: only its /papers/ pages are papers
+  if (/huggingface\.co$/i.test(url.hostname) && !url.pathname.startsWith('/papers/')) return null
+  const id = url.pathname.match(/\/(\d{4}\.\d{4,5}(?:v\d+)?)(?:\.pdf)?(?:\/|$)/)
+  return id && [id[0], id[1]]
+}
+
 function identify(input) {
   const s = input.trim()
   const doi = s.match(/\b(10\.\d{4,9}\/[^\s"<>]+?)(?:[.,;)]?)$/i) || s.match(/doi\.org\/(10\.\d{4,9}\/[^\s"<>]+)/i)
   if (doi) return { kind: 'doi', id: decodeURIComponent(doi[1]) }
   const arxiv =
     s.match(/arxiv\.org\/(?:abs|pdf)\/([^\s?#]+?)(?:\.pdf)?(?:[?#].*)?$/i) ||
+    arxivMirror(s) ||
     s.match(/^(?:arxiv:)?(\d{4}\.\d{4,5}(?:v\d+)?)$/i) ||
     s.match(/^(?:arxiv:)?([a-z-]+(?:\.[A-Z]{2})?\/\d{7}(?:v\d+)?)$/i)
   if (arxiv) return { kind: 'arxiv', id: arxiv[1] }
@@ -107,7 +126,18 @@ function formatEntry(type, key, fields) {
 }
 
 /** Escape characters that break BibTeX/LaTeX in values taken from plain-text APIs. */
-const texEscape = s => s.replace(/\\/g, '\\textbackslash{}').replace(/([&%$#_])/g, '\\$1').replace(/\s+/g, ' ').trim()
+const TEX_CHARS = { '\\': '\\textbackslash{}', '{': '\\{', '}': '\\}', '&': '\\&', '%': '\\%', $: '\\$', '#': '\\#', _: '\\_', '^': '\\^{}', '~': '\\textasciitilde{}' }
+const texEscape = s => s.replace(/[\\{}&%$#_^~]/g, c => TEX_CHARS[c]).replace(/\s+/g, ' ').trim()
+
+/** "Page title | Site name" → "Page title", when the tail is the site's name (it isn't part of the title). */
+function withoutSiteName(title, url, siteName = '') {
+  const m = title.match(/^(.{8,}?)\s+[|·•–—-]\s+([^|·•–—]{1,40})$/)
+  if (!m) return title
+  const squash = s => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const tail = squash(m[2])
+  const host = squash(new URL(url).hostname.replace(/^www\./, '').split('.')[0])
+  return tail && (tail.includes(host) || host.includes(tail) || tail === squash(siteName)) ? m[1].trim() : title
+}
 
 // ---------- resolvers ----------
 
@@ -117,7 +147,14 @@ async function fromDoi(doi) {
   const entry = parseEntry(text)
   if (!entry) throw new Error('doi.org returned no BibTeX for this DOI')
   entry.fields.doi = entry.fields.doi || doi
+  for (const f of ['author', 'editor']) if (entry.fields[f]) entry.fields[f] = fixCaps(entry.fields[f])
   return entry
+}
+
+/** Some publishers register names in capitals (CARSKADON, MARY A.); reference lists should read Carskadon, Mary A. */
+function fixCaps(names) {
+  // braced names ({NASA}) are left as they are
+  return names.replace(/(^|[\s,'-])([A-ZÀ-Þ]{2,})(?=$|[\s,.'-])/g, (m, pre, word) => pre + word[0] + word.slice(1).toLowerCase())
 }
 
 function xmlText(xml, tag) {
@@ -192,7 +229,8 @@ async function fromUrl(url) {
       return await fromDoi(doi.replace(/^doi:/i, ''))
     } catch {}
   }
-  const title = meta('citation_title')[0] || decodeXml(xmlText(html, 'title'))
+  const property = name => decodeXml(html.match(new RegExp(`<meta[^>]+property=["']${name}["'][^>]*content=["']([^"']+)["']`, 'i'))?.[1] ?? '')
+  const title = meta('citation_title')[0] || withoutSiteName(property('og:title') || decodeXml(xmlText(html, 'title')), url, property('og:site_name'))
   const authors = meta('citation_author')
   const date = meta('citation_publication_date')[0] || meta('citation_date')[0] || ''
   return {
@@ -209,6 +247,102 @@ async function fromUrl(url) {
   }
 }
 
+// ---------- reading a paper ----------
+
+const MAX_PDF = 80 * 1048576
+
+/** The arXiv id of a source, from its eprint, a link to it (arXiv, alphaXiv…) or an arXiv DOI. */
+function arxivIdOf(f) {
+  if (/^\d{4}\.\d{4,5}(v\d+)?$/.test(f.eprint ?? '')) return f.eprint
+  for (const s of [f.url, (f.howpublished ?? '').replace(/^\\url\{(.*)\}$/, '$1')]) {
+    const id = s && identify(s)
+    if (id?.kind === 'arxiv') return id.id
+  }
+  return f.doi?.match(/^10\.48550\/arxiv\.(.+)$/i)?.[1] ?? null
+}
+
+/**
+ * Where this source can be read for free: `links` are PDFs to download (arXiv for preprints, a direct .pdf link, then
+ * open-access copies OpenAlex knows of); `pages` are free copies only offered on a web page (SSRN, some repositories).
+ */
+async function freeCopies(f) {
+  const links = [], pages = []
+  const arxiv = arxivIdOf(f)
+  if (arxiv) links.push({ url: `https://arxiv.org/pdf/${arxiv}`, from: 'arXiv' })
+  if (/^https?:\/\/\S+\.pdf(\?\S*)?$/i.test(f.url ?? '')) links.push({ url: f.url, from: new URL(f.url).hostname.replace(/^www\./, '') })
+  const doi = f.doi?.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+  if (doi && !arxiv) {
+    try {
+      const work = await (await get(`https://api.openalex.org/works/https://doi.org/${doi}`)).json()
+      for (const loc of [work.best_oa_location, ...(work.locations ?? [])])
+        if (loc?.is_oa && loc.pdf_url && !links.some(l => l.url === loc.pdf_url)) links.push({ url: loc.pdf_url, from: loc.source?.display_name || new URL(loc.pdf_url).hostname })
+        else if (loc?.is_oa && loc.landing_page_url && !pages.some(p => p.url === loc.landing_page_url)) pages.push({ url: loc.landing_page_url, from: loc.source?.display_name || new URL(loc.landing_page_url).hostname })
+    } catch {} // OpenAlex doesn't know this DOI: only the links above
+  }
+  return { links, pages }
+}
+
+/** PDFs this source can be downloaded from. */
+const pdfLinks = async f => (await freeCopies(f)).links
+
+/** The file a PDF the user added for this source (from its page, or their own copy) is kept in. */
+function addedPdfFile(fields, cacheDir) {
+  const id = arxivIdOf(fields) || fields.doi?.replace(/^https?:\/\/(dx\.)?doi\.org\//i, '').toLowerCase() || fields.url || fields.title || ''
+  return require('path').join(cacheDir, `added-${require('crypto').createHash('sha1').update(id).digest('hex').slice(0, 16)}.pdf`)
+}
+
+const isPdf = bytes => bytes.length <= MAX_PDF && Buffer.from(bytes.subarray(0, 5)).toString('latin1') === '%PDF-'
+
+/**
+ * A PDF of the source, cached in `cacheDir`: one the user added for it, else a free copy online. { bytes, from, url }.
+ * Throws with a plain explanation when there isn't one; `error.page` is a page where it's free to read, if any.
+ */
+async function paperPdf(fields, cacheDir) {
+  const fsp = require('fs/promises')
+  const crypto = require('crypto')
+  const path = require('path')
+  const added = await fsp.readFile(addedPdfFile(fields, cacheDir)).catch(() => null)
+  if (added) return { bytes: added, from: 'the copy you added' }
+  const { links, pages } = await freeCopies(fields)
+  for (const link of links) {
+    const file = path.join(cacheDir, `${crypto.createHash('sha1').update(link.url).digest('hex').slice(0, 16)}.pdf`)
+    const cached = await fsp.readFile(file).catch(() => null)
+    if (cached) return { bytes: cached, from: link.from, url: link.url }
+    try {
+      const res = await fetch(link.url, { headers: { 'User-Agent': UA, Accept: 'application/pdf' }, redirect: 'follow', signal: AbortSignal.timeout(60000) })
+      if (!res.ok || Number(res.headers.get('content-length') ?? 0) > MAX_PDF) continue
+      const bytes = Buffer.from(await res.arrayBuffer())
+      // publishers often answer a PDF link with a login or cookie page instead
+      if (!isPdf(bytes)) continue
+      await fsp.mkdir(cacheDir, { recursive: true })
+      await fsp.writeFile(file, bytes)
+      return { bytes, from: link.from, url: link.url }
+    } catch {}
+  }
+  const page = pages[0]
+  throw Object.assign(
+    new Error(
+      page
+        ? `This paper is free on ${page.from}, but that site doesn’t let apps download it. Open its page, press its download button, and the PDF will show here.`
+        : links.length
+          ? 'The free copies of this paper couldn’t be downloaded (the site may need a login).'
+          : fields.doi
+            ? 'No free copy of this paper was found. It’s probably behind a paywall: your school library’s website can usually get it.'
+            : 'There’s no PDF to show for this source. Papers on arXiv, and journal papers with a free copy, can be read here.'
+    ),
+    { page: page?.url }
+  )
+}
+
+/** Keep a PDF the user got for this source (downloaded from its page, or their own file) so Read shows it from now on. */
+async function addPdf(fields, cacheDir, bytes) {
+  if (!isPdf(bytes)) throw new Error('That file isn’t a PDF.')
+  const fsp = require('fs/promises')
+  await fsp.mkdir(cacheDir, { recursive: true })
+  await fsp.writeFile(addedPdfFile(fields, cacheDir), bytes)
+  return { bytes, from: 'the copy you added' }
+}
+
 /** Resolve any supported identifier to { key, bibtex, entry }. */
 async function cite(input) {
   const id = identify(input)
@@ -217,6 +351,47 @@ async function cite(input) {
     id.kind === 'doi' ? await fromDoi(id.id) : id.kind === 'arxiv' ? await fromArxiv(id.id) : id.kind === 'isbn' ? await fromIsbn(id.id) : await fromUrl(id.id)
   const key = makeKey(entry.fields)
   return { key, kind: id.kind, type: entry.type, bibtex: formatEntry(entry.type, key, entry.fields), fields: entry.fields }
+}
+
+/**
+ * Candidates for a typed title or a pasted reference ("Smith, J. (2020). Sleep and memory…"): Crossref matches
+ * whole references well, and Open Library finds books. Each candidate can then go through cite() by its id.
+ */
+async function match(text) {
+  const q = text.replace(/\s+/g, ' ').trim().slice(0, 500)
+  if (!q) return []
+  const [works, books] = await Promise.allSettled([
+    get(`https://api.crossref.org/works?rows=5&select=DOI,title,author,issued,container-title,publisher,type&query.bibliographic=${encodeURIComponent(q)}`).then(r => r.json()),
+    get(`https://openlibrary.org/search.json?limit=3&fields=title,subtitle,author_name,first_publish_year,isbn,publisher&q=${encodeURIComponent(q.slice(0, 200))}`).then(r => r.json()),
+  ])
+  const out = []
+  for (const w of works.status === 'fulfilled' ? works.value.message?.items ?? [] : []) {
+    if (!w.DOI || !w.title?.[0]) continue
+    out.push({
+      id: w.DOI,
+      kind: 'doi',
+      title: decodeXml(w.title[0].replace(/<[^>]+>/g, '')),
+      authors: (w.author ?? []).map(a => [a.given, a.family].filter(Boolean).join(' ') || a.name).filter(Boolean),
+      year: w.issued?.['date-parts']?.[0]?.[0] ?? null,
+      venue: w['container-title']?.[0] || w.publisher || '',
+      type: w.type,
+    })
+  }
+  for (const b of books.status === 'fulfilled' ? books.value.docs ?? [] : []) {
+    const isbn = (b.isbn ?? []).find(i => i.length === 13) ?? b.isbn?.[0]
+    if (!isbn || !b.title) continue
+    out.push({
+      id: isbn,
+      kind: 'isbn',
+      title: b.title + (b.subtitle ? `: ${b.subtitle}` : ''),
+      authors: b.author_name ?? [],
+      year: b.first_publish_year ?? null,
+      venue: b.publisher?.[0] ?? '',
+      type: 'book',
+    })
+  }
+  if (!out.length && works.status === 'rejected' && books.status === 'rejected') throw new Error(`Couldn't reach the lookup services (${works.reason.message}). Check the internet connection.`)
+  return out
 }
 
 // ---------- search ----------
@@ -295,4 +470,4 @@ async function webEvidence(claim) {
   return out
 }
 
-module.exports = { cite, search, identify, makeKey, parseEntry, formatEntry, abstractFor, webEvidence }
+module.exports = { cite, match, fixCaps, withoutSiteName, texEscape, paperPdf, addPdf, pdfLinks, arxivIdOf, search, identify, makeKey, parseEntry, formatEntry, abstractFor, webEvidence }

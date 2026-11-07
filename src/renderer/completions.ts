@@ -9,6 +9,7 @@ import topHundredSnippets from '../overleaf/data/top-hundred-snippets'
 import extraSnippets from '../overleaf/data/snippets'
 import { environments } from '../overleaf/data/environments'
 import { packageNames } from '../overleaf/data/package-names'
+import { parseBib } from './bib-project'
 import { classNames } from '../overleaf/data/class-names'
 
 // Same conversion Overleaf uses: "$1" placeholders become CodeMirror "#{1}" fields
@@ -41,6 +42,8 @@ const environmentNames = [...environments.keys()]
 export const projectSymbols = {
   labels: new Set<string>(),
   bibKeys: new Set<string>(),
+  /** Each .bib file's entries by key, for showing citations as they read (Visual mode). */
+  bibFiles: new Map<string, Map<string, Record<string, string>>>(),
 }
 
 type LibraryItem = { citekey: string; title: string; authors: string[]; year: number | null }
@@ -111,6 +114,7 @@ export function indexProjectText(path: string, text: string) {
     for (const m of text.matchAll(/@(\w+)\s*\{\s*([^,\s]+)\s*,/g)) {
       if (!/^(comment|string|preamble)$/i.test(m[1])) projectSymbols.bibKeys.add(m[2])
     }
+    projectSymbols.bibFiles.set(path, new Map(parseBib(text, path).map(e => [e.key, e.fields])))
   } else {
     for (const m of text.matchAll(/\\label\{([^}]+)\}/g)) projectSymbols.labels.add(m[1])
   }

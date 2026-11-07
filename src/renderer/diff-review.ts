@@ -18,6 +18,10 @@ export async function editsToChanges(edits: FindReplace[], host: ReviewHost) {
   const problems: string[] = []
   for (const e of edits) {
     const file = e.file.replace(/\\/g, '/').replace(/^\.\//, '')
+    if (file.startsWith('.texdesk/')) {
+      problems.push(`${file} is made by LaTeX on every compile, so changing it wouldn't last. The fix belongs in the file it's made from (for a .bbl, your .bib sources).`)
+      continue
+    }
     if (!texts.has(file)) texts.set(file, host.fileExists(file) ? await host.fileText(file) : '')
     const text = texts.get(file)!
     if (!e.find) {

@@ -11,7 +11,10 @@ export type FormatContext = {
   /** Add a preamble line (e.g. \usetikzlibrary{…}) unless `present` matches the preamble. */
   ensurePreamble(line: string, present: RegExp): void
   prompt(message: string, initial?: string): Promise<string | null>
-  projectImages(): string[]
+  /** Pick a picture with the system file dialog; its \includegraphics path, or null if cancelled. */
+  chooseImage(): Promise<string | null>
+  /** The 📚 Sources dialog: add sources, cite them, choose the reference style. */
+  openSources(): void
 }
 
 // Commands Overleaf's grammar parses into dedicated nodes, so toggling can find and unwrap them
@@ -270,11 +273,7 @@ export function insertTable(view: EditorView, ctx: FormatContext, o: TableOption
 }
 
 export async function insertFigure(view: EditorView, ctx: FormatContext) {
-  const images = ctx.projectImages()
-  const hint = images.length
-    ? `Image file (images in this project: ${images.slice(0, 6).join(', ')}${images.length > 6 ? ', …' : ''})`
-    : 'Image file path, relative to the main document (add the image to the project folder first)'
-  const file = await ctx.prompt(hint, images[0] ?? 'image.png')
+  const file = await ctx.chooseImage()
   if (!file) return
   insertBlock(
     view,

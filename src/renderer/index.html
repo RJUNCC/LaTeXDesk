@@ -32,7 +32,7 @@
 
   <main id="workspace" hidden>
     <aside id="sidebar">
-      <div class="section-title">Files <button id="new-file-btn" class="icon" title="New file">+</button></div>
+      <div class="section-title">Files <span class="title-buttons"><button id="add-files-btn" class="icon" title="Add existing files (images, PDFs, reference files…)">📎</button><button id="new-file-btn" class="icon" title="New file">+</button></span></div>
       <ul id="file-list"></ul>
       <div class="section-title">Outline</div>
       <ul id="outline"></ul>
@@ -46,6 +46,7 @@
     <section id="pdf-pane">
       <nav id="side-tabs" class="side-tabs">
         <button data-panel="pdf" class="active">PDF</button>
+        <button data-panel="reader" hidden>📄 Paper</button>
         <button data-panel="comments" title="Comments and suggested changes">Comments <span class="badge" id="comments-badge"></span></button>
         <button data-panel="ai">AI <span class="badge" id="ai-badge"></span></button>
         <button data-panel="review" title="Grammar, flow, fact check, argument and bias">Review <span class="badge error" id="review-badge"></span></button>
@@ -86,6 +87,7 @@
       <div class="side-panel" data-panel="library" hidden></div>
       <div class="side-panel" data-panel="research" hidden></div>
       <div class="side-panel" data-panel="history" hidden></div>
+      <div class="side-panel" data-panel="reader" hidden></div>
     </section>
   </main>
 

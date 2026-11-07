@@ -3,7 +3,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 pdfjs.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs'
 
-type PageView = { el: HTMLDivElement; canvas: HTMLCanvasElement; width: number; height: number; rendered: number }
+type PageView = { el: HTMLDivElement; canvas: HTMLCanvasElement; width: number; height: number; rendered: number; text?: HTMLDivElement }
 
 export class PdfViewer {
   private doc: PDFDocumentProxy | null = null
@@ -17,6 +17,8 @@ export class PdfViewer {
   /** Called with PDF-point coordinates when the user double-clicks a page (reverse SyncTeX). */
   onDoubleClick: (page: number, x: number, y: number) => void = () => {}
   onScaleChange: (scale: number) => void = () => {}
+  /** Draw pdf.js's invisible text over each page so text can be selected and copied (the Paper tab). */
+  selectableText = false
 
   constructor(private container: HTMLElement) {
     this.observer = new IntersectionObserver(
@@ -54,6 +56,7 @@ export class PdfViewer {
       const vp = page.getViewport({ scale: 1 })
       const el = document.createElement('div')
       el.className = 'pdf-page'
+      el.dataset.page = String(i)
       const canvas = previous[i - 1] ?? document.createElement('canvas')
       el.appendChild(canvas)
       el.addEventListener('dblclick', ev => {
@@ -70,6 +73,19 @@ export class PdfViewer {
     this.applyScale(this.fitWidth ? this.computeFitScale() : this.scale)
     this.container.scrollTop = scrollRatio * this.container.scrollHeight
     for (const p of pages) this.observer.observe(p.el)
+  }
+
+  /** The paper's text, page by page, up to `maxChars` in all; `pages` is how many pages that covers. */
+  async text(maxChars: number) {
+    let out = ''
+    let pages = 0
+    const total = this.doc?.numPages ?? 0
+    for (let i = 1; i <= total && out.length < maxChars; i++) {
+      const content = await (await this.doc!.getPage(i)).getTextContent()
+      out += `[page ${i}]\n` + content.items.map(t => ('str' in t ? t.str + (t.hasEOL ? '\n' : ' ') : '')).join('') + '\n'
+      pages = i
+    }
+    return { text: out.slice(0, maxChars), pages, total }
   }
 
   clear() {
@@ -151,6 +167,7 @@ export class PdfViewer {
     canvas.height = viewport.height
     await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
     if (view.rendered !== scale || !this.pages.includes(view)) return
+    if (this.selectableText) await this.renderText(view, page, scale)
     const old = view.canvas
     view.canvas = canvas
     // a blank placeholder (first load) is simply swapped; a real image fades out under the new one
@@ -166,5 +183,20 @@ export class PdfViewer {
     }
     canvas.addEventListener('animationend', done, { once: true })
     setTimeout(done, 400) // in case the animation never runs (e.g. page scrolled out of view)
+  }
+
+  private async renderText(view: PageView, page: Awaited<ReturnType<PDFDocumentProxy['getPage']>>, scale: number) {
+    const layer = document.createElement('div')
+    layer.className = 'textLayer'
+    layer.style.setProperty('--scale-factor', String(scale))
+    try {
+      await new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: layer, viewport: page.getViewport({ scale }) }).render()
+    } catch {
+      return // a page without text (a scan): nothing to select
+    }
+    if (view.rendered !== scale) return
+    view.text?.remove()
+    view.text = layer
+    view.el.append(layer)
   }
 }

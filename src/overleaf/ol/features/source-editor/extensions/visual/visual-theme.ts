@@ -467,6 +467,33 @@ const mainVisualTheme = EditorView.theme({
       padding: '0 0.5em',
     },
   },
+  // LaTeXDesk: citations and the reference list
+  '.ol-cm-citation': {
+    padding: '0 0.25em',
+    borderRadius: '3px',
+    background: 'rgba(19, 138, 7, 0.14)',
+    cursor: 'pointer',
+    '&:hover': { background: 'rgba(19, 138, 7, 0.28)' },
+    '&.missing': {
+      background: 'rgba(212, 167, 44, 0.2)',
+      textDecoration: 'underline wavy rgba(212, 167, 44, 0.9)',
+    },
+  },
+  '.ol-cm-bibliography': {
+    display: 'inline-flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '0.4em 0.8em',
+    padding: '0.4em 0.9em',
+    borderRadius: '8px',
+    backgroundColor: 'rgba(125, 125, 125, 0.08)',
+    border: '1px solid rgba(125, 125, 125, 0.25)',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '14px',
+    cursor: 'pointer',
+    '& button': { fontSize: '13px', padding: '2px 10px', cursor: 'pointer' },
+  },
+  '.ol-cm-bibliography-info': { opacity: 0.75 },
 })
 
 const contentWidthThemeConf = new Compartment()

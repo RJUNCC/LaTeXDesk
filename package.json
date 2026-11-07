@@ -1,8 +1,9 @@
 {
   "name": "latexdesk",
   "productName": "LaTeXDesk",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Desktop LaTeX editor built on Overleaf's open-source editor components",
+  "desktopName": "latexdesk.desktop",
   "license": "AGPL-3.0-only",
   "author": "RJUNCC",
   "homepage": "https://github.com/RJUNCC/LaTeXDesk",
@@ -18,7 +19,9 @@
     "build": "node build.mjs",
     "start": "node build.mjs && electron .",
     "dist": "node build.mjs --minify && electron-builder --win",
-    "release": "node build.mjs --minify && electron-builder --win --publish always"
+    "release": "node build.mjs --minify && electron-builder --win --publish always",
+    "dist:linux": "node build.mjs --minify && electron-builder --linux",
+    "release:linux": "node build.mjs --minify && electron-builder --linux --publish always"
   },
   "build": {
     "appId": "local.texdesk",
@@ -50,6 +53,34 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "artifactName": "LaTeXDesk-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "pacman",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Office",
+      "executableName": "latexdesk",
+      "synopsis": "LaTeX editor with a visual mode, live PDF and local AI",
+      "description": "A desktop editor for papers, reports, theses and maths. Write in Visual mode like a word processor, or in Code mode as LaTeX, and get a PDF.",
+      "maintainer": "RJUNCC <RJUNCC@users.noreply.github.com>",
+      "artifactName": "LaTeXDesk-${version}-${arch}.${ext}",
+      "syncDesktopName": true
+    },
+    "pacman": {
+      "depends": [
+        "gtk3",
+        "nss",
+        "alsa-lib",
+        "libcups",
+        "libxss",
+        "libxtst",
+        "mesa",
+        "xdg-utils",
+        "libsecret"
+      ]
     },
     "directories": {
       "output": "release"

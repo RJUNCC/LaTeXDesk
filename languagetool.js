@@ -16,7 +16,7 @@ let starting = null
 // Where LanguageTool lives: an existing install in one of these folders is reused where it is (a developer
 // machine keeps big tools on a separate drive); otherwise it goes in the app's own data folder, never onto
 // some other drive of the user's.
-const EXISTING_INSTALLS = ['Y:\\LanguageTool']
+const EXISTING_INSTALLS = process.platform === 'win32' ? ['Y:\\LanguageTool'] : []
 
 async function installRoot(userData, existing = EXISTING_INSTALLS) {
   for (const dir of existing) if (await findServerJar(dir)) return dir
@@ -62,14 +62,45 @@ async function install(userData, onProgress = () => {}) {
   }
   await out.close()
   onProgress({ stage: 'unpack', fraction: null })
-  // Windows' bsdtar unpacks zip files
-  await new Promise((resolve, reject) => {
-    const p = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', zip], { cwd: root, windowsHide: true })
-    p.on('error', reject)
-    p.on('close', code => (code === 0 ? resolve() : reject(new Error(`unpacking failed (${code})`))))
-  })
+  if (process.platform === 'win32') {
+    // Windows' bsdtar unpacks zip files
+    await new Promise((resolve, reject) => {
+      const p = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', zip], { cwd: root, windowsHide: true })
+      p.on('error', reject)
+      p.on('close', code => (code === 0 ? resolve() : reject(new Error(`unpacking failed (${code})`))))
+    })
+  } else await unzip(zip, root)
   await fs.rm(zip, { force: true })
   return status(userData)
+}
+
+/** Unpack a zip into `root`, streaming (LanguageTool is too big to hold in memory). Linux's GNU tar can't read zips. */
+async function unzip(zipFile, root) {
+  const fsSync = require('fs')
+  const { Unzip, UnzipInflate } = require('fflate')
+  const base = path.resolve(root)
+  let failure = null
+  const unzipper = new Unzip(entry => {
+    const dest = path.resolve(base, entry.name)
+    // never write outside the folder, whatever names the archive holds
+    if (dest !== base && !dest.startsWith(base + path.sep)) return void (failure ??= new Error(`unsafe path in archive: ${entry.name}`))
+    if (entry.name.endsWith('/')) return void fsSync.mkdirSync(dest, { recursive: true })
+    fsSync.mkdirSync(path.dirname(dest), { recursive: true })
+    const fd = fsSync.openSync(dest, 'w')
+    entry.ondata = (err, chunk, final) => {
+      if (err) return void ((failure ??= err), fsSync.closeSync(fd))
+      fsSync.writeSync(fd, chunk)
+      if (final) fsSync.closeSync(fd)
+    }
+    entry.start()
+  })
+  unzipper.register(UnzipInflate)
+  for await (const chunk of fsSync.createReadStream(zipFile)) {
+    unzipper.push(chunk)
+    if (failure) throw failure
+  }
+  unzipper.push(new Uint8Array(0), true)
+  if (failure) throw failure
 }
 
 /** Start the local server if needed (one instance, shared by every check). */
@@ -126,4 +157,4 @@ function stop() {
   server = null
 }
 
-module.exports = { status, install, ensureRunning, check, stop, installRoot }
+module.exports = { status, install, ensureRunning, check, stop, installRoot, unzip }

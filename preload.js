@@ -1,11 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('texdesk', {
+  platform: process.platform,
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: patch => ipcRenderer.invoke('settings:set', patch),
   chooseProject: () => ipcRenderer.invoke('project:choose'),
   listFiles: root => ipcRenderer.invoke('project:list', root),
   reveal: root => ipcRenderer.invoke('project:reveal', root),
+  addFiles: root => ipcRenderer.invoke('project:add-files', root),
+  chooseImage: (root, mainDir) => ipcRenderer.invoke('project:choose-image', root, mainDir),
+  chooseSources: () => ipcRenderer.invoke('sources:choose'),
   readFile: (root, rel) => ipcRenderer.invoke('file:read', root, rel),
   readFileOptional: (root, rel) => ipcRenderer.invoke('file:read-optional', root, rel),
   deleteAppData: (root, rel) => ipcRenderer.invoke('file:delete-appdata', root, rel),
@@ -49,6 +53,10 @@ contextBridge.exposeInMainWorld('texdesk', {
   research: {
     cite: input => ipcRenderer.invoke('research:cite', input),
     search: query => ipcRenderer.invoke('research:search', query),
+    match: text => ipcRenderer.invoke('research:match', text),
+    paperPdf: (fields, zoteroItemKey) => ipcRenderer.invoke('paper:pdf', fields, zoteroItemKey),
+    choosePaperPdf: fields => ipcRenderer.invoke('paper:choose-pdf', fields),
+    paperFromPage: (fields, page) => ipcRenderer.invoke('paper:from-page', fields, page),
   },
   exportSubmission: (root, mainFile, zipPath) => ipcRenderer.invoke('export:submission', root, mainFile, zipPath),
   zotero: {
@@ -56,6 +64,7 @@ contextBridge.exposeInMainWorld('texdesk', {
     search: query => ipcRenderer.invoke('zotero:search', query),
     exportBib: keys => ipcRenderer.invoke('zotero:export', keys),
     save: payload => ipcRenderer.invoke('zotero:save', payload),
+    saveTarget: () => ipcRenderer.invoke('zotero:save-target'),
     index: () => ipcRenderer.invoke('zotero:index'),
     retrieve: (question, k, citekeys) => ipcRenderer.invoke('zotero:retrieve', question, k, citekeys),
     onIndexProgress: cb => ipcRenderer.on('zotero:index-progress', (_e, p) => cb(p)),

@@ -2,10 +2,33 @@
 // downloads in the background, and installs when the app is next closed (or straight away on "Restart now").
 // Releases need the installer, its .blockmap and latest.yml attached (electron-builder makes all three).
 const { app } = require('electron')
+const fs = require('fs')
+const path = require('path')
 
 let updater = null
 let send = () => {}
 let state = { status: 'idle' }
+
+/**
+ * Installed from a Linux package (.pacman or .deb; electron-builder records which). Installing an update then
+ * needs the user's password, so it never happens by surprise on quit, only when they choose to install.
+ */
+function packageType() {
+  try {
+    return fs.readFileSync(path.join(process.resourcesPath, 'package-type'), 'utf8').trim()
+  } catch {
+    return null
+  }
+}
+const PACKAGE = process.platform === 'linux' ? packageType() : null
+const INSTALL_COMMAND = { pacman: 'sudo pacman -U', deb: 'sudo apt install', rpm: 'sudo dnf install' }
+
+/** A graphical password prompt electron-updater can use; without one it would wait forever on a terminal-less sudo. */
+async function graphicalSudo() {
+  const { which } = require('./tex')
+  for (const cmd of ['pkexec', 'gksudo', 'kdesudo', 'beesu']) if (await which(cmd)) return cmd
+  return null
+}
 
 function setState(patch) {
   state = { ...state, ...patch }
@@ -16,7 +39,7 @@ function load() {
   if (updater) return updater
   ;({ autoUpdater: updater } = require('electron-updater'))
   updater.autoDownload = false
-  updater.autoInstallOnAppQuit = true
+  updater.autoInstallOnAppQuit = !PACKAGE
   updater.logger = null
   // tests point it at a local feed (dev-app-update.yml) while running unpackaged
   if (process.env.LATEXDESK_UPDATE_FEED) {
@@ -27,7 +50,11 @@ function load() {
   updater.on('update-available', info => setState({ status: 'available', version: info.version, notes: releaseNotes(info), date: info.releaseDate }))
   updater.on('update-not-available', () => setState({ status: 'current' }))
   updater.on('download-progress', p => setState({ status: 'downloading', percent: Math.round(p.percent), bytesPerSecond: p.bytesPerSecond }))
-  updater.on('update-downloaded', info => setState({ status: 'ready', version: info.version }))
+  updater.on('update-downloaded', async info => {
+    // a Linux package: installs with a password prompt, or (with no graphical prompt) by a command the user runs
+    const manual = PACKAGE && !(await graphicalSudo()) && info.downloadedFile ? `${INSTALL_COMMAND[PACKAGE] ?? 'sudo'} '${info.downloadedFile}'` : null
+    setState({ status: 'ready', version: info.version, package: PACKAGE, manual })
+  })
   updater.on('error', e => setState({ status: 'error', error: friendly(e) }))
   return updater
 }
@@ -74,7 +101,7 @@ async function download() {
 }
 
 function install() {
-  if (state.status !== 'ready') return false
+  if (state.status !== 'ready' || state.manual) return false
   // quit and run the installer silently, then reopen LaTeXDesk
   setImmediate(() => load().quitAndInstall(true, true))
   return true
